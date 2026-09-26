@@ -1,0 +1,9 @@
+node_modules
+dist
+.vercel
+.DS_Store
+*.log
+
+# Raw CC0 model downloads (37 MB). The optimised models used by the site live in public/models;
+# re-download the originals from poly.pizza if you need to re-run assets-src/build.mjs.
+assets-src/raw

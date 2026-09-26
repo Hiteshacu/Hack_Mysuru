@@ -1,0 +1,12 @@
+{
+  "name": "palace-pass-hitesh",
+  "version": "1.0.0",
+  "description": "Palace Pass: Dasara entry-slot booking API for Mysuru Palace (ProofArena challenge submission)",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test tests/"
+  },
+  "author": "Hitesh",
+  "license": "MIT"
+}

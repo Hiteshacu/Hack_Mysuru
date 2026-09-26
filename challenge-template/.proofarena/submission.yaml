@@ -1,0 +1,10 @@
+version: 1
+challenge_id: palace-pass
+entry: src/server.js          # must export createServer()
+tests:
+  root: tests/
+  command: npm test
+docs:
+  architecture: docs/architecture.md
+  decisions: docs/decisions.md
+  ai_disclosure: ai.md

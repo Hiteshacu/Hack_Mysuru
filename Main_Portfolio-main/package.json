@@ -1,0 +1,33 @@
+{
+  "name": "hitesh-a-portfolio",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Hitesh A — an explorable 3D portfolio world built with Three.js",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fontsource-variable/fraunces": "^5.3.0",
+    "@fontsource-variable/manrope": "^5.3.0",
+    "gsap": "^3.15.0",
+    "n8ao": "^2.0.1",
+    "postprocessing": "^6.39.5",
+    "simplex-noise": "^4.0.3",
+    "three": "~0.186.0"
+  },
+  "devDependencies": {
+    "@gltf-transform/cli": "^4.5.0",
+    "@gltf-transform/core": "^4.5.0",
+    "@gltf-transform/extensions": "^4.5.0",
+    "@gltf-transform/functions": "^4.5.0",
+    "@types/three": "~0.186.0",
+    "meshoptimizer": "^1.2.0",
+    "sharp": "^0.35.4",
+    "typescript": "~5.9.3",
+    "vite": "^8.3.0"
+  }
+}
