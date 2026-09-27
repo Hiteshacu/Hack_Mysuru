@@ -3,14 +3,14 @@
 import { Suspense, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Megaphone, Smartphone, Bell, Send, CheckCircle2, AlertTriangle, Info, Gamepad2, MessageCircle, RefreshCw } from 'lucide-react';
+import { Megaphone, Smartphone, Bell, Send, CheckCircle2, AlertTriangle, Info, Gamepad2 } from 'lucide-react';
 import { useShared } from '@/components/state-context';
 import { Card, Button, Field, inputCls, Pill, SectionTitle, Avatar, Empty, cx } from '@/components/ui';
 import { candidates } from '@/lib/selectors';
 import { api, timeAgo } from '@/lib/client';
 import { toast } from '@/components/toast';
 
-const STATUS_LABEL = { delivered: 'delivered ✓', sent: 'sent to carrier', queued: 'queued', accepted: 'accepted', undelivered: 'not delivered', failed: 'failed', skipped: 'skipped', simulated: 'simulated' };
+const STATUS_LABEL = { delivered: 'delivered ✓', sent: 'sent', queued: 'sent', accepted: 'sent', undelivered: 'not delivered', failed: 'failed', skipped: 'skipped', simulated: 'simulated' };
 const STATUS_COLOR = { delivered: 'green', sent: 'sky', queued: 'sky', accepted: 'sky', undelivered: 'rose', failed: 'rose', read: 'green' };
 
 /** Plain-language fix for the most common Twilio errors. */
@@ -40,8 +40,6 @@ function Notify() {
   const [top, setTop] = useState(state.students.length);
   const [sms, setSms] = useState(true);
   const [inapp, setInapp] = useState(true);
-  const [whatsapp, setWhatsapp] = useState(!!state.whatsappProvider);
-  const [checking, setChecking] = useState(null);
   const quest = quests.find((q) => q.id === questId);
   const company = state.activeCompany;
   const [message, setMessage] = useState(
@@ -54,22 +52,10 @@ function Notify() {
   const recipients = useMemo(() => (audience === 'all' ? state.students : [...ranked, ...others].slice(0, top)), [audience, top, state.students, ranked, others]);
   const history = state.notifications.filter((n) => n.companyId === company.id);
 
-  async function checkDelivery(id) {
-    setChecking(id);
-    try {
-      await api('POST', '/api/notify', { refresh: id });
-      await refresh();
-    } catch (err) {
-      toast(err.message, 'error');
-    } finally {
-      setChecking(null);
-    }
-  }
-
   async function send() {
     setSending(true);
     try {
-      const channels = [sms && 'sms', whatsapp && state.whatsappProvider && 'whatsapp', inapp && 'inapp'].filter(Boolean);
+      const channels = [sms && 'sms', inapp && 'inapp'].filter(Boolean);
       const n = await api('POST', '/api/notify', { questId, audience, top, channels, message });
       toast(`Sent to ${n.deliveries.length} students${n.provider === 'simulated' ? ' (SMS simulated)' : ''}`);
       refresh();
@@ -134,15 +120,6 @@ function Notify() {
               <label className={cx('flex items-center gap-2 rounded-xl px-3 py-2 ring-1 cursor-pointer', inapp ? 'ring-indigo-400 bg-indigo-50' : 'ring-slate-200')}>
                 <input type="checkbox" checked={inapp} onChange={(e) => setInapp(e.target.checked)} /> <Bell className="size-4" /> In-app notification
               </label>
-              {state.whatsappProvider ? (
-                <label className={cx('flex items-center gap-2 rounded-xl px-3 py-2 ring-1 cursor-pointer', whatsapp ? 'ring-emerald-400 bg-emerald-50' : 'ring-slate-200')}>
-                  <input type="checkbox" checked={whatsapp} onChange={(e) => setWhatsapp(e.target.checked)} /> <MessageCircle className="size-4" /> WhatsApp
-                </label>
-              ) : (
-                <span className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-slate-500 ring-1 ring-dashed ring-slate-200" title="Set TWILIO_WHATSAPP_FROM to enable">
-                  <MessageCircle className="size-4" /> WhatsApp (not set up)
-                </span>
-              )}
             </div>
           </Field>
           <Field label="Message" hint="{name} becomes the student's first name, {link} their personal quest link.">
@@ -202,52 +179,28 @@ function Notify() {
                 <Megaphone className="size-4 text-indigo-600" />
                 <b className="flex-1">{state.quests.find((q) => q.id === n.questId)?.title}</b>
                 <span className="text-xs text-slate-500">{timeAgo(n.createdAt)}</span>
-                {(n.deliveries || []).some((d) => d.smsId || d.whatsappId) && (
-                  <button
-                    onClick={() => checkDelivery(n.id)}
-                    disabled={checking === n.id}
-                    className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50"
-                  >
-                    <RefreshCw className={cx('size-3.5', checking === n.id && 'animate-spin')} /> Check delivery
-                  </button>
-                )}
               </div>
               <div className="flex flex-wrap gap-2">
-                {(n.deliveries || []).map((d) => (
-                  <span key={d.studentId} className="contents">
-                    {d.sms && d.sms !== 'off' && (
-                      <Pill color={STATUS_COLOR[d.sms] || 'slate'} icon={['failed', 'undelivered'].includes(d.sms) ? AlertTriangle : Smartphone}>
-                        {d.name}: SMS {STATUS_LABEL[d.sms] || d.sms}
-                        {d.sms !== 'skipped' ? ` · ${d.phone}` : ''}
-                      </Pill>
-                    )}
-                    {d.whatsapp && d.whatsapp !== 'off' && (
-                      <Pill color={STATUS_COLOR[d.whatsapp] || 'slate'} icon={MessageCircle}>
-                        {d.name}: WhatsApp {STATUS_LABEL[d.whatsapp] || d.whatsapp}
-                      </Pill>
-                    )}
-                  </span>
-                ))}
+                {(n.deliveries || [])
+                  .filter((d) => d.sms && d.sms !== 'off')
+                  .map((d) => (
+                    <Pill key={d.studentId} color={STATUS_COLOR[d.sms] || 'slate'} icon={['failed', 'undelivered'].includes(d.sms) ? AlertTriangle : Smartphone}>
+                      {d.name}: SMS {STATUS_LABEL[d.sms] || d.sms}
+                      {d.sms !== 'skipped' ? ` · ${d.phone}` : ''}
+                    </Pill>
+                  ))}
               </div>
-              {/* Why a message was refused or not delivered (unverified number, carrier filtering, ...). */}
-              {(n.deliveries || []).flatMap((d) =>
-                [
-                  ['failed', 'undelivered'].includes(d.sms) && { ch: 'SMS', why: d.smsError || d.error, key: d.studentId + 's', d },
-                  ['failed', 'undelivered'].includes(d.whatsapp) && { ch: 'WhatsApp', why: d.whatsappError, key: d.studentId + 'w', d },
-                ].filter(Boolean),
-              ).map(({ ch, why, key, d }) => (
-                <div key={key} className="flex gap-2 rounded-xl bg-rose-50 p-3 text-xs text-rose-900">
-                  <AlertTriangle className="size-4 shrink-0" />
-                  <span>
-                    <b>{d.name} · {ch} ({d.phone}):</b> {why || 'Twilio could not deliver the message.'} {twilioHint(why)}
-                  </span>
-                </div>
-              ))}
-              {(n.deliveries || []).some((d) => ['sent', 'queued', 'accepted'].includes(d.sms)) && (
-                <p className="text-xs text-slate-500">
-                  &quot;Sent&quot; means Twilio accepted it and passed it to the carrier. Press <b>Check delivery</b> in a minute to see if the phone received it.
-                </p>
-              )}
+              {/* Why an SMS was refused or not delivered. */}
+              {(n.deliveries || [])
+                .filter((d) => ['failed', 'undelivered'].includes(d.sms))
+                .map((d) => (
+                  <div key={d.studentId} className="flex gap-2 rounded-xl bg-rose-50 p-3 text-xs text-rose-900">
+                    <AlertTriangle className="size-4 shrink-0" />
+                    <span>
+                      <b>{d.name} ({d.phone}):</b> {d.error || 'Twilio could not deliver the SMS.'} {twilioHint(d.error)}
+                    </span>
+                  </div>
+                ))}
             </Card>
           ))}
           <Link href="/student" className="text-sm font-semibold text-violet-700">Switch to student → see the notification</Link>

@@ -63,7 +63,7 @@ export function maskPhone(phone) {
   return m ? `${m[1]} ${'•'.repeat(m[2].length)}${m[3]}` : n;
 }
 
-// ---------------------------------------------------------------- delivery status + WhatsApp
+// ---------------------------------------------------------------- delivery status
 
 function twilioAuth() {
   const { TWILIO_ACCOUNT_SID: sid, TWILIO_AUTH_TOKEN: token } = process.env;
@@ -90,34 +90,6 @@ export async function checkMessage(messageSid) {
   }
 }
 
-/**
- * WhatsApp through Twilio (optional). Set TWILIO_WHATSAPP_FROM, e.g. the free sandbox number
- * whatsapp:+14155238886 (the recipient first sends the sandbox "join <code>" message to that number once).
- * WhatsApp is far more reliable than international SMS for Indian numbers.
- */
-export function whatsappProvider() {
-  return smsProvider() === 'twilio' && process.env.TWILIO_WHATSAPP_FROM ? 'twilio-whatsapp' : null;
-}
-
-export async function sendWhatsApp(to, body) {
-  if (!whatsappProvider()) return { status: 'off' };
-  if (isPlaceholder(to)) return { status: 'skipped', error: 'Demo placeholder number (add a real one in DEMO_PHONES)' };
-  const { sid, header } = twilioAuth();
-  const from = process.env.TWILIO_WHATSAPP_FROM.startsWith('whatsapp:') ? process.env.TWILIO_WHATSAPP_FROM : `whatsapp:${process.env.TWILIO_WHATSAPP_FROM}`;
-  try {
-    const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
-      method: 'POST',
-      headers: { Authorization: header, 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ To: `whatsapp:${e164(to)}`, From: from, Body: body }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    const json = await res.json().catch(() => ({}));
-    return res.ok ? { status: 'sent', id: json.sid } : { status: 'failed', error: json.message || `HTTP ${res.status}` };
-  } catch (err) {
-    return { status: 'failed', error: err.message };
-  }
-}
-
 /** Plain-language reason for Twilio delivery error codes (shown on the Notify page). */
 export function deliveryHint(code) {
   const hints = {
@@ -125,13 +97,11 @@ export function deliveryHint(code) {
     30004: 'The number blocked the message.',
     30005: 'Unknown number. Check DEMO_PHONES.',
     30006: 'The carrier cannot receive SMS on this number (landline or unsupported).',
-    30007: 'Filtered by the Indian carrier: SMS from international numbers without Indian DLT registration are often blocked. Use WhatsApp (TWILIO_WHATSAPP_FROM) for the demo.',
-    30008: 'The carrier reported an unknown error. Indian carriers often drop international SMS; WhatsApp is more reliable.',
+    30007: 'Blocked by the mobile carrier (Indian carriers often filter SMS from international numbers).',
+    30008: 'The carrier reported an unknown error (common for international SMS to India).',
     30034: 'The sender number is not registered for this route.',
     21408: 'SMS to India is not enabled: Twilio console → Messaging → Settings → Geo permissions → India.',
     21608: 'Trial account: verify this number in Twilio → Phone Numbers → Verified Caller IDs.',
-    63015: 'WhatsApp sandbox: the phone must first send "join <your-sandbox-code>" to +1 415 523 8886 on WhatsApp.',
-    63016: 'WhatsApp: outside the 24-hour window. Send any message to the sandbox number from the phone, then retry.',
   };
   return hints[Number(code)] || '';
 }

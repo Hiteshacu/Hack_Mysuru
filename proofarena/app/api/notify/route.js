@@ -2,43 +2,11 @@ import { handle, body } from '@/lib/api';
 import { readDb, updateDb, uid, logActivity } from '@/lib/db';
 import { buildState } from '@/lib/state';
 import { candidates } from '@/lib/selectors';
-import { sendSms, sendWhatsApp, checkMessage, deliveryHint, smsProvider, whatsappProvider, phoneFor, maskPhone, isPlaceholder } from '@/lib/sms';
+import { sendSms, checkMessage, deliveryHint, smsProvider, phoneFor, maskPhone, isPlaceholder } from '@/lib/sms';
 
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-
-/** Ask Twilio what happened to each accepted message (delivered / undelivered + reason). */
-async function refreshStatuses(deliveries) {
-  for (const d of deliveries) {
-    for (const ch of ['sms', 'whatsapp']) {
-      const id = d[`${ch}Id`];
-      if (!id) continue;
-      const s = await checkMessage(id);
-      if (!s) continue;
-      d[ch] = s.status;
-      d[`${ch}Code`] = s.errorCode;
-      if (s.errorCode) d[`${ch}Error`] = [s.error, deliveryHint(s.errorCode)].filter(Boolean).join(' ');
-    }
-  }
-  return deliveries;
-}
-
-// "Notify others": sends a quest invite to top students by SMS / WhatsApp (Twilio, if configured) and in-app.
-// POST { questId, audience, top, channels, message }   → send
-// POST { refresh: notificationId }                     → re-check Twilio delivery status
+// "Notify others": sends a quest invite to top students by SMS (Twilio, if configured) and in-app.
 export const POST = handle(async (request) => {
   const b = await body(request);
-
-  if (b.refresh) {
-    const n0 = readDb().notifications.find((n) => n.id === b.refresh);
-    if (!n0) throw new Error('Notification not found');
-    const deliveries = await refreshStatuses(structuredClone(n0.deliveries));
-    return updateDb((d) => {
-      const n = d.notifications.find((x) => x.id === b.refresh);
-      if (n) n.deliveries = deliveries;
-      return n;
-    });
-  }
-
   const db = readDb();
   const quest = db.quests.find((q) => q.id === b.questId);
   if (!quest) throw new Error('Pick a quest to announce');
@@ -58,25 +26,17 @@ export const POST = handle(async (request) => {
     const text = b.message.replace('{name}', s.name.split(' ')[0]).replace('{link}', link);
     const phone = phoneFor(s);
     const sms = channels.includes('sms') ? await sendSms(phone, text) : null;
-    const wa = channels.includes('whatsapp') ? await sendWhatsApp(phone, text) : null;
-    deliveries.push({
-      studentId: s.id,
-      name: s.name,
-      phone: isPlaceholder(phone) ? phone : maskPhone(phone),
-      rank: ranked.indexOf(id) + 1 || null,
-      sms: sms?.status || 'off',
-      smsId: sms?.id,
-      error: sms?.error,
-      whatsapp: wa?.status || 'off',
-      whatsappId: wa?.id,
-      whatsappError: wa?.error,
-      text,
-    });
+    deliveries.push({ studentId: s.id, name: s.name, phone: isPlaceholder(phone) ? phone : maskPhone(phone), rank: ranked.indexOf(id) + 1 || null, sms: sms?.status || 'off', smsId: sms?.id, error: sms?.error, text });
   }
-  // "sent" only means Twilio accepted it; wait a moment and record what the carrier did.
-  if (deliveries.some((d) => d.smsId || d.whatsappId)) {
-    await wait(4000);
-    await refreshStatuses(deliveries);
+  // Twilio "accepted" isn't "delivered": wait a moment, then record what the carrier did.
+  if (deliveries.some((d) => d.smsId)) {
+    await new Promise((r) => setTimeout(r, 4000));
+    for (const d of deliveries) {
+      const s = d.smsId ? await checkMessage(d.smsId) : null;
+      if (!s) continue;
+      d.sms = s.status;
+      if (s.errorCode) d.error = [s.error, deliveryHint(s.errorCode)].filter(Boolean).join(' ');
+    }
   }
 
   return updateDb((d) => {
@@ -88,8 +48,7 @@ export const POST = handle(async (request) => {
       company: company?.name,
       title: `${company?.name} invited you to a 3D Quest: ${quest.title}`,
       channels,
-      provider: channels.includes('sms') || channels.includes('whatsapp') ? smsProvider() || 'simulated' : null,
-      whatsapp: whatsappProvider(),
+      provider: channels.includes('sms') ? smsProvider() || 'simulated' : null,
       deliveries,
       readBy: [],
       createdAt: new Date().toISOString(),
