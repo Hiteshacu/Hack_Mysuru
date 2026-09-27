@@ -18,7 +18,8 @@ interface Apple {
   group: THREE.Group;
   body: THREE.Mesh;
   mat: THREE.MeshStandardMaterial;
-  sign: THREE.Sprite;
+  /** Name-plate standing in front of the stump, so each answer clearly belongs to its own apple. */
+  sign: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
   pos: THREE.Vector3;
   eaten: boolean;
   phase: number;
@@ -287,7 +288,8 @@ export class SnakeGame {
     const labels = [...this.options].sort(() => Math.random() - 0.5);
     labels.forEach((label, i) => {
       const gx = (i % 3) - 1, gz = Math.floor(i / 3) - 1;
-      const pos = new THREE.Vector3(gx * 3.6, 0, gz * 3.6 - 1);
+      // Rows well apart, so each name-plate sits clearly in front of its own apple.
+      const pos = new THREE.Vector3(gx * 3.9, 0, gz * 4.4 - 1);
       const group = new THREE.Group();
       group.position.copy(pos);
       const stump = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.58, 0.55, 18), [bark, rings, bark]);
@@ -309,11 +311,18 @@ export class SnakeGame {
       leaf.position.set(0.15, 1.55, 0);
       leaf.rotation.z = 0.5;
       group.add(leaf);
-      const sign = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.labelTexture(label, 'idle'), depthTest: false }));
-      sign.scale.set(2.3, 0.575, 1);
-      sign.position.y = 2.2;
-      sign.renderOrder = 10;
+      // Name-plate on a little wooden stake in front of the stump, tilted up towards the camera.
+      const sign = new THREE.Mesh(
+        new THREE.PlaneGeometry(2.4, 0.6),
+        new THREE.MeshBasicMaterial({ map: this.labelTexture(label, 'idle'), transparent: true, toneMapped: false }),
+      );
+      sign.position.set(0, 0.55, 1.05);
+      sign.rotation.x = -0.85;
       group.add(sign);
+      const stake = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.5, 0.07), new THREE.MeshStandardMaterial({ color: '#5b3b26' }));
+      stake.position.set(0, 0.22, 1.12);
+      stake.castShadow = true;
+      group.add(stake);
       this.group.add(group);
       this.apples.push({ label, group, body, mat, sign, pos, eaten: false, phase: i * 0.9 });
     });
