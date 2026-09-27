@@ -130,6 +130,7 @@ export class SnakeGame {
       <div class="sg-top">
         <div class="sg-q"><span class="sg-kicker">Stage 3 · Snake Debug · Snake Meadow</span><strong>What kind of bug is this? Eat the right apple.</strong></div>
         <div class="sg-lives" aria-label="Lives">${'<b>❤</b>'.repeat(LIVES)}</div>
+        <button class="sg-toggle" aria-label="Show or hide the bug report">📄</button>
         <button class="sg-exit" aria-label="Leave">✕</button>
       </div>
       <aside class="sg-brief">
@@ -144,6 +145,7 @@ export class SnakeGame {
       <div class="sg-banner" hidden></div>`;
     host.appendChild(this.root);
     this.root.querySelector('.sg-exit')!.addEventListener('click', () => this.close(true));
+    this.root.querySelector('.sg-toggle')!.addEventListener('click', () => this.root.classList.toggle('brief-hidden'));
 
     // Borrow the world: park the (hidden) player in the meadow so grass and trees stream around it.
     const p = exp.player.position;
@@ -591,7 +593,9 @@ export class SnakeGame {
       ease = 5;
     } else {
       // A steady high view of the whole meadow that drifts gently towards the snake, with the forest behind.
-      pos = this.center.clone().add(new THREE.Vector3(this.pos.x * 0.35, 10.5, 15 + this.pos.z * 0.3));
+      // Portrait phones see less width: pull the camera back so the whole bundle of apples fits.
+      const far = window.innerWidth < window.innerHeight ? 1.75 : 1;
+      pos = this.center.clone().add(new THREE.Vector3(this.pos.x * 0.35, 10.5 * far, (15 + this.pos.z * 0.3) * far));
       look = this.center.clone().add(new THREE.Vector3(this.pos.x * 0.4, 0.5, this.pos.z * 0.35 - 1.5));
     }
     const k = 1 - Math.exp(-dt * ease);

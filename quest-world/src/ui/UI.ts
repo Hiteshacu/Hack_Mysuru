@@ -413,6 +413,8 @@ export class UI {
       enter.hidden = false;
       this.root.querySelector('.q-loader')?.classList.add('gate-open');
       if (!reducedMotion) gsap.from(enter.children, { y: 16, opacity: 0, scale: 0.9, stagger: 0.12, duration: 0.7, ease: 'back.out(2)' });
+      // Phones: the quiz sits below the intro, so bring the Enter button back into view.
+      if (window.innerWidth <= 900) window.setTimeout(() => enter.scrollIntoView({ behavior: 'smooth', block: 'center' }), 900);
     }
   }
 

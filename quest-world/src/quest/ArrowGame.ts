@@ -36,6 +36,8 @@ interface Target {
   glow: THREE.Mesh;
   sign: THREE.Mesh;
   base: THREE.Vector3;
+  /** x from SLOTS before the portrait squeeze. */
+  slotX: number;
   r: number;
   hover: number;
   wobble: number;
@@ -72,6 +74,8 @@ interface Spark {
 }
 
 const COLORS = ['#f2b35c', '#7fd6c2', '#e39bd0'];
+/** Phones and tablets: touch controls and a lighter renderer (two 3D views at once is heavy for mobile GPUs). */
+const TOUCH = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
 const ARROWS_PER_ROUND = 2;
 const STEADY_TIME = 1.6;
 const FULL_DRAW = 0.85;
@@ -260,6 +264,8 @@ export class ArrowGame {
   /** World position of the last impact, for the impact camera. */
   private impactAt = new THREE.Vector3();
   private disposables: { dispose(): void }[] = [];
+  /** Portrait phones: targets closer together and a wider view, so all three answers fit on screen. */
+  private xScale = 1;
 
   constructor(
     host: HTMLElement,
@@ -284,18 +290,18 @@ export class ArrowGame {
       <div class="ag-bottom">
         <div class="ag-power"><i></i><em class="ag-zone"></em></div>
         <span class="ag-status">Put the <b>+</b> on the right answer</span>
-        <span class="ag-hint">Move to aim · hold <kbd>click</kbd> / <kbd>Space</kbd> to draw · release in the <b class="ok">green</b> to shoot · <kbd>←</kbd><kbd>↑</kbd><kbd>→</kbd><kbd>↓</kbd> also aim</span>
+        <span class="ag-hint">${TOUCH ? 'Touch and hold on the right target · drag to adjust · lift your finger in the <b class="ok">green</b> to shoot' : 'Move to aim · hold <kbd>click</kbd> / <kbd>Space</kbd> to draw · release in the <b class="ok">green</b> to shoot · <kbd>←</kbd><kbd>↑</kbd><kbd>→</kbd><kbd>↓</kbd> also aim'}</span>
       </div>
       <div class="ag-banner" hidden></div>`;
     host.appendChild(this.root);
     const gl = this.root.querySelector<HTMLCanvasElement>('.ag-gl')!;
     this.overlay = this.root.querySelector<HTMLCanvasElement>('.ag-overlay')!;
     this.o = this.overlay.getContext('2d')!;
-    this.renderer = new THREE.WebGLRenderer({ canvas: gl, antialias: true, powerPreference: 'high-performance' });
+    this.renderer = new THREE.WebGLRenderer({ canvas: gl, antialias: !TOUCH, powerPreference: 'high-performance' });
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 0.9;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.enabled = !TOUCH;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.root.querySelector('.ag-exit')!.addEventListener('click', () => this.close(true));
 
@@ -720,7 +726,7 @@ export class ArrowGame {
       group.add(post);
     }
     this.scene.add(group);
-    return { label, index, group, face, glow, sign, base: new THREE.Vector3(), r, hover: 0, wobble: 0, phase: rnd() * 6 };
+    return { label, index, group, face, glow, sign, base: new THREE.Vector3(), slotX: 0, r, hover: 0, wobble: 0, phase: rnd() * 6 };
   }
 
   private clearRound() {
@@ -747,7 +753,7 @@ export class ArrowGame {
   // ---------------------------------------------------------------- input
 
   private resize = () => {
-    this.dpr = Math.min(1.75, window.devicePixelRatio || 1);
+    this.dpr = Math.min(TOUCH ? 1.25 : 1.75, window.devicePixelRatio || 1);
     this.W = window.innerWidth;
     this.H = window.innerHeight;
     this.renderer.setPixelRatio(this.dpr);
@@ -757,7 +763,15 @@ export class ArrowGame {
     this.overlay.style.width = `${this.W}px`;
     this.overlay.style.height = `${this.H}px`;
     this.camera.aspect = this.W / this.H;
+    const portrait = this.W < this.H;
+    this.camera.fov = portrait ? 66 : 48;
+    this.xScale = portrait ? 0.62 : 1;
     this.camera.updateProjectionMatrix();
+    for (const t of this.targets) {
+      t.base.x = t.slotX * this.xScale;
+      t.group.position.x = t.base.x;
+      t.group.lookAt(HOME.x, t.base.y, HOME.z);
+    }
   };
 
   private bind() {
@@ -768,7 +782,11 @@ export class ArrowGame {
     };
     this.overlay.addEventListener('pointermove', point);
     this.overlay.addEventListener('pointerdown', (e) => {
-      this.overlay.setPointerCapture(e.pointerId);
+      try {
+        this.overlay.setPointerCapture(e.pointerId);
+      } catch {
+        /* some mobile browsers refuse capture: aiming still works without it */
+      }
       point(e);
       this.startDraw();
     });
@@ -896,7 +914,8 @@ export class ArrowGame {
     this.targets = order.map(({ label, index }, k) => {
       const t = this.makeTarget(label, index);
       const [x, z, y] = SLOTS[(k + i) % 3];
-      t.base.set(x, y, z);
+      t.slotX = x;
+      t.base.set(x * this.xScale, y, z);
       t.group.position.copy(t.base);
       t.group.lookAt(HOME.x, y, HOME.z);
       return t;

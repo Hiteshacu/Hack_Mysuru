@@ -35,6 +35,9 @@ interface MonacoEditor {
   onDidChangeModelContent(cb: () => void): void;
 }
 
+/** Phones/tablets: Monaco (VS Code's editor) does not support mobile keyboards, so they get the plain editor. */
+const TOUCH = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
+
 const show = (v: unknown) => {
   try {
     return JSON.stringify(v);
@@ -42,6 +45,13 @@ const show = (v: unknown) => {
     return String(v);
   }
 };
+
+/** AI-written text uses a little markdown: **bold**, `code` and line breaks. Escaped first, so it stays safe. */
+const md = (text: string) =>
+  esc(text)
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\n/g, '<br>');
 
 /** Parameter names from a function signature, for "nums = [2,7,11]" style inputs. */
 function paramNames(code: string, fn: string) {
@@ -117,10 +127,10 @@ export class CodeStage {
             <div class="ide-meta"><span class="ide-diff ${difficulty.toLowerCase().replace(' ', '-')}">${difficulty}</span>${tags.map((t) => `<span class="ide-tag">${esc(t)}</span>`).join('')}<span class="ide-tag">🔒 ${hiddenCount} hidden tests</span></div>
             ${
               debug
-                ? `<p class="cs-kicker">🚨 Bug report</p><p>${esc(d.story)}</p>
+                ? `<p class="cs-kicker">🚨 Bug report</p><p>${md(d.story)}</p>
                    <p class="cs-kicker">Your mission</p><p>Find and fix the bug in <code>${esc(this.fn)}</code>. Keep the function name and parameters. The ${d.tests.length} tests must pass${hiddenCount ? `, plus <b>${hiddenCount} hidden tests</b> (so fix the real bug, don't hard-code answers)` : ''}.</p>
                    ${bugLines.length ? `<p class="cs-snakehint">🐍 The snake found the bug in ${bugLines.length === 1 ? 'line ' + bugLines[0] : 'lines ' + bugLines.join(', ')}. It's circling it in the editor.</p>` : ''}`
-                : `<p>${esc(s.statement)}</p>`
+                : `<p>${md(s.statement)}</p>`
             }
             ${this.cases
               .map(
@@ -255,7 +265,11 @@ export class CodeStage {
 
   private dragSplit(handle: HTMLElement, onMove: (dx: number, dy: number) => void) {
     handle.addEventListener('pointerdown', (e) => {
-      handle.setPointerCapture(e.pointerId);
+      try {
+        handle.setPointerCapture(e.pointerId);
+      } catch {
+        /* capture unsupported: dragging still works while over the handle */
+      }
       let x = e.clientX, y = e.clientY;
       const move = (ev: PointerEvent) => {
         onMove(ev.clientX - x, ev.clientY - y);
@@ -351,6 +365,10 @@ export class CodeStage {
         );
       }
     };
+    if (TOUCH) {
+      useTextarea();
+      return;
+    }
     // Offline or blocked CDN: fall back to a plain editor after 10 seconds.
     const t = window.setTimeout(useTextarea, 10000);
     try {

@@ -2435,3 +2435,146 @@ code,
     display: none;
   }
 }
+
+/* ---------------------------------------------------------------- phones: touch + layout */
+
+/* Without this the browser treats a drag as scrolling and cancels the aim / steering. */
+.arrow-game .ag-overlay,
+.snake-game .sg-hit {
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+/* iOS zooms into inputs smaller than 16px when they get focus. */
+@media (pointer: coarse) {
+  .cs-textarea,
+  .cs-args,
+  .ide-field textarea {
+    font-size: 16px !important;
+  }
+}
+@media (max-width: 900px) {
+  /* Phones: one scrolling column — problem, then editor, then results. */
+  .code-stage.ide {
+    display: block;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .ide-head {
+    position: sticky;
+    top: 0;
+    z-index: 6;
+    flex-wrap: wrap;
+    padding: 8px 10px;
+  }
+  .ide-head .cs-title strong {
+    font-size: 1rem;
+  }
+  .ide-actions {
+    width: 100%;
+    margin-left: 0;
+  }
+  .ide-actions .ide-btn {
+    flex: 1;
+    justify-content: center;
+  }
+  .cs-arena {
+    min-height: 0;
+    padding: 8px 10px;
+    gap: 8px;
+  }
+  .ar-field {
+    height: 56px;
+  }
+  .ar-bug {
+    font-size: 1.5rem;
+  }
+  .ar-boss {
+    font-size: 2.4rem;
+  }
+  .ide-main {
+    display: block;
+  }
+  .ide-left {
+    max-height: none;
+    border-right: 0;
+    border-bottom: 1px solid #262a38;
+  }
+  .ide-left .ide-pane {
+    max-height: 45vh;
+  }
+  .ide-right .cs-monaco {
+    height: 55vh;
+    min-height: 280px;
+  }
+  .ide-hsplit {
+    display: none;
+  }
+  .ide-bottom {
+    height: auto;
+    min-height: 220px;
+  }
+  .ide-bottom .ide-pane {
+    max-height: none;
+  }
+  .ide-status {
+    position: sticky;
+    bottom: 0;
+  }
+  .ide-tools button {
+    padding: 6px 8px;
+  }
+}
+.sg-toggle {
+  display: none;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  font-size: 1.1rem;
+  background: var(--glass-strong);
+  box-shadow: inset 0 0 0 1px var(--line);
+  cursor: pointer;
+}
+.snake-game.brief-hidden .sg-brief {
+  display: none;
+}
+@media (max-width: 760px) {
+  .sg-toggle {
+    display: grid;
+  }
+  .sg-top {
+    top: 8px;
+    gap: 6px;
+    width: calc(100% - 16px);
+  }
+  .sg-q {
+    padding: 8px 12px;
+  }
+  .sg-q strong {
+    font-size: 0.95rem;
+  }
+  .sg-lives {
+    padding: 6px 8px;
+    font-size: 1.1rem;
+    letter-spacing: 1px;
+  }
+  .sg-exit {
+    width: 40px;
+    height: 40px;
+  }
+  .sg-brief {
+    left: 8px;
+    bottom: 64px;
+    width: calc(100% - 16px);
+    max-height: 32vh;
+    font-size: 0.8rem;
+  }
+  .sg-status {
+    bottom: 12px;
+    min-width: 0;
+    width: calc(100% - 24px);
+    font-size: 0.85rem;
+  }
+}
