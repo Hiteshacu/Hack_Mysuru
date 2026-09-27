@@ -12,6 +12,7 @@ import gsap from 'gsap';
 import type { Experience } from '../core/Experience';
 import { SNAKE_MEADOW } from '../world/layout';
 import { esc, play, type QuestPublic } from './api';
+import { skipButtonHTML, wireSkip } from './skip';
 
 interface Apple {
   label: string;
@@ -118,6 +119,8 @@ export class SnakeGame {
     private onSolved: (bugLines: number[]) => void,
     private onExit: () => void,
     private exp: Experience,
+    /** Skip button: goes straight to the debug console (without the bug-line hint). */
+    onSkip?: () => Promise<void>,
   ) {
     const d = q.debug;
     const code = d.buggyCode
@@ -132,6 +135,7 @@ export class SnakeGame {
         <div class="sg-q"><span class="sg-kicker">Stage 3 · Snake Debug · Snake Meadow</span><strong>What kind of bug is this? Eat the right apple.</strong></div>
         <div class="sg-lives" aria-label="Lives">${'<b>❤</b>'.repeat(LIVES)}</div>
         <button class="sg-toggle" aria-label="Show or hide the bug report">📄</button>
+        ${onSkip ? skipButtonHTML() : ''}
         <button class="sg-exit" aria-label="Leave">✕</button>
       </div>
       <aside class="sg-brief">
@@ -146,6 +150,7 @@ export class SnakeGame {
       <div class="sg-banner" hidden></div>`;
     host.appendChild(this.root);
     this.root.querySelector('.sg-exit')!.addEventListener('click', () => this.close(true));
+    if (onSkip) wireSkip(this.root, onSkip);
     this.root.querySelector('.sg-toggle')!.addEventListener('click', () => this.root.classList.toggle('brief-hidden'));
 
     // Borrow the world: park the (hidden) player in the meadow so grass and trees stream around it.

@@ -12,6 +12,7 @@
 
 import { esc, play, type CodeResult, type QuestPublic, type TestCase } from './api';
 import { CodeArena } from './Arena';
+import { skipButtonHTML, wireSkip } from './skip';
 
 type Kind = 'debug' | 'dsa';
 type Mode = 'run' | 'submit' | 'custom';
@@ -82,6 +83,8 @@ export class CodeStage {
     private onExit: () => void,
     /** Debug Den: the lines the snake circles (earned in Snake Debug). */
     private bugLines: number[] = [],
+    /** Skip button: unlocks the next stage with 0 points for this one. */
+    onSkip?: () => Promise<void>,
   ) {
     const d = q.debug;
     const s = q.dsa;
@@ -112,6 +115,7 @@ export class CodeStage {
           <span class="cs-timer" title="Time on this stage">⏱ 00:00</span>
           ${debug ? '' : '<button class="ide-btn run" data-cs="run" title="Run the examples (Ctrl+Enter)">▶ Run</button>'}
           <button class="ide-btn submit" data-cs="submit" title="${debug ? 'Run every test (Ctrl+Enter)' : 'Submit against all tests (Ctrl+Shift+Enter)'}">${debug ? '▶ Run tests & submit fix' : '☁ Submit'}</button>
+          ${onSkip ? skipButtonHTML() : ''}
           <button class="cs-exit" aria-label="Back to the world" title="Back to the world (your code is kept)">✕</button>
         </div>
       </header>
@@ -189,6 +193,7 @@ export class CodeStage {
     host.appendChild(this.root);
     this.arena = new CodeArena(this.root.querySelector<HTMLElement>('.cs-arena')!, kind, this.cases.length, hiddenCount);
     this.bindUi();
+    if (onSkip) wireSkip(this.root, onSkip);
     this.showCase(0);
     this.timer = window.setInterval(() => {
       const t = Math.floor((performance.now() - this.started) / 1000);

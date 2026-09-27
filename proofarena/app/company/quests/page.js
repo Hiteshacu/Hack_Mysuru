@@ -8,6 +8,7 @@ import { Card, Button, Pill, Empty, SectionTitle, Avatar } from '@/components/ui
 import { api } from '@/lib/client';
 import { toast } from '@/components/toast';
 
+const SKIP_LABEL = { mcq: 'Gate Quiz', arrow: 'Arrow Range', snake: 'Snake Debug', debug: 'Debug Den', dsa: 'Algorithm Grove' };
 const STAGE_LABEL = { mcq: 'Gate Quiz', arrow: 'Arrow Range', debug: 'Debug Den', dsa: 'Algorithm Grove', done: 'Finished' };
 
 const STAGES = [
@@ -148,6 +149,9 @@ export default function Quests() {
                               <td className="px-3 py-2 tabular-nums">
                                 {[a.mcq, a.arrow, a.debug, a.dsa].map((n) => n || 0).join(' · ')}
                                 {many && <span className="ml-2 text-xs text-amber-700" title="Many retries on a stage: worth a closer look in the interview">many retries</span>}
+                                {r.skipped?.length > 0 && (
+                                  <span className="ml-2 text-xs text-rose-700" title="Skipped games give 0 points">skipped: {r.skipped.map((k) => SKIP_LABEL[k] || k).join(', ')}</span>
+                                )}
                               </td>
                               <td className="px-3 py-2 text-right font-semibold tabular-nums">{r.points}</td>
                             </tr>

@@ -2584,3 +2584,73 @@ code,
   overscroll-behavior: contain;
   touch-action: pan-y;
 }
+
+/* ---------------------------------------------------------------- Skip button (every stage, right of the top bar) */
+.q-skip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  padding: 0 14px;
+  border-radius: 14px;
+  font: 700 0.85rem/1 var(--ui);
+  white-space: nowrap;
+  color: #ffe2a8;
+  background: rgba(242, 179, 92, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(242, 179, 92, 0.55);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+.q-skip:hover {
+  background: rgba(242, 179, 92, 0.32);
+}
+.q-skip.armed {
+  color: #fff;
+  background: rgba(255, 90, 90, 0.4);
+  box-shadow: inset 0 0 0 1px rgba(255, 120, 110, 0.9);
+  animation: q-skip-pulse 0.9s ease-in-out infinite;
+}
+.q-skip:disabled {
+  opacity: 0.6;
+  cursor: wait;
+  animation: none;
+}
+@keyframes q-skip-pulse {
+  50% {
+    box-shadow: inset 0 0 0 1px rgba(255, 120, 110, 0.9), 0 0 0 4px rgba(255, 90, 90, 0.25);
+  }
+}
+.ide-actions .q-skip {
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 10px;
+  font-size: 0.8rem;
+}
+.mcq-head-r {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 10px;
+}
+.mcq-head-r .q-skip {
+  height: 36px;
+  border-radius: 10px;
+  font-size: 0.8rem;
+}
+.mcq-done.skipped > span {
+  background: rgba(242, 179, 92, 0.2);
+  color: #f2b35c;
+}
+@media (max-width: 760px) {
+  .q-skip {
+    height: 40px;
+    padding: 0 10px;
+    font-size: 0.75rem;
+  }
+  .q-skip.armed {
+    white-space: normal;
+    max-width: 120px;
+    line-height: 1.15;
+  }
+}

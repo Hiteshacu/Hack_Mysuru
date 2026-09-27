@@ -26,6 +26,8 @@ export interface QuestRun {
   points: number;
   rifle: boolean;
   mcqScore?: number;
+  /** Games the player skipped (0 points each). */
+  skipped?: string[];
   arrowScore?: { correct: number; accuracy: number };
   finishedAt?: string | null;
 }

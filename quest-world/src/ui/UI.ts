@@ -7,6 +7,7 @@ import { icons } from './icons';
 import { MapView } from './MapView';
 import { esc, play, quest, refreshQuest, stage, type Profile } from '../quest/api';
 import { McqGate } from '../quest/McqGate';
+import { skipStage, type SkipStage } from '../quest/skip';
 import { ArrowGame } from '../quest/ArrowGame';
 import { CodeStage } from '../quest/CodeStage';
 import { SnakeGame } from '../quest/SnakeGame';
@@ -398,6 +399,7 @@ export class UI {
     new McqGate($('.mcq-gate', this.root), () => {
       this.gatePassed = true;
       this.syncEnter();
+      this.syncQuest();
     });
     this.syncQuest();
   }
@@ -408,7 +410,7 @@ export class UI {
     const lock = $('.q-lock-note', this.root);
     const open = this.worldReady && this.gatePassed;
     lock.hidden = open;
-    lock.textContent = this.gatePassed ? '⏳ Quiz passed. Building the world…' : this.worldReady ? '🔒 The world is ready. Pass the Gate Quiz to open the gate →' : '🔒 Pass the Gate Quiz to open the gate';
+    lock.textContent = this.gatePassed ? '⏳ Gate open. Building the world…' : this.worldReady ? '🔒 The world is ready. Pass the Gate Quiz to open the gate →' : '🔒 Pass the Gate Quiz to open the gate';
     if (open && enter.hidden) {
       enter.hidden = false;
       this.root.querySelector('.q-loader')?.classList.add('gate-open');
@@ -479,12 +481,18 @@ export class UI {
           if (earned) this.stageCleared('arrow');
         },
         this.exp?.assets,
+        async () => {
+          if (!(await this.skip('arrow'))) return;
+          game.close(false);
+          this.holdWorld(false);
+          this.stageCleared('arrow', !earned);
+        },
       );
       this.overlay = game;
       return;
     }
     const openCode = (bugLines: number[] = []) => {
-      this.overlay = new CodeStage(
+      const stage: CodeStage = new CodeStage(
         host,
         kind as 'debug' | 'dsa',
         q,
@@ -494,13 +502,20 @@ export class UI {
         },
         () => this.holdWorld(false),
         bugLines,
+        async () => {
+          if (!(await this.skip(kind as 'debug' | 'dsa'))) return;
+          stage.close(false);
+          this.holdWorld(false);
+          this.stageCleared(kind as 'debug' | 'dsa', true);
+        },
       );
+      this.overlay = stage;
     };
     if (kind === 'debug' && !quest.view.snake?.done) {
       // Debug Den opens with Snake Debug: eat the apple that names the bug, then the snake leads into the console.
       // Snake Debug runs inside the live world (Snake Meadow), so the world keeps rendering; the HUD stays hidden.
       this.exp.paused = false;
-      this.overlay = new SnakeGame(
+      const snake: SnakeGame = new SnakeGame(
         host,
         q,
         quest.view.snake?.options ?? [],
@@ -512,7 +527,15 @@ export class UI {
         },
         () => this.holdWorld(false),
         this.exp,
+        async () => {
+          if (!(await this.skip('snake'))) return;
+          snake.close(false);
+          this.exp.paused = true;
+          this.toast('⏭ Snake Debug skipped', 'Straight to the debug console. Find the bug yourself and make every test pass.', '#f2b35c', 6000);
+          openCode([]);
+        },
       );
+      this.overlay = snake;
       return;
     }
     if (kind === 'debug') openCode(quest.view.snake?.bugLines ?? []);
@@ -529,17 +552,34 @@ export class UI {
     this.exp.input.enabled = !on;
   }
 
-  private async stageCleared(kind: 'arrow' | 'debug' | 'dsa') {
+  /** Skip button of a stage: asks the server, and on failure explains why. Returns true once skipped. */
+  private async skip(stage: SkipStage): Promise<boolean> {
+    try {
+      await skipStage(stage);
+      return true;
+    } catch (err) {
+      this.toast('Could not skip', esc((err as Error).message), '#ff7a5c', 6000);
+      return false;
+    }
+  }
+
+  private async stageCleared(kind: 'arrow' | 'debug' | 'dsa', skipped = false) {
     await refreshQuest().catch(() => null);
     this.syncQuest();
     const run = quest.view?.run;
-    const msg = {
-      arrow: ['🏹 Rifle earned!', 'Press <kbd>B</kbd> to start a battle any time. Next stop: the Debug Den in the west. Follow the golden arrow.'],
-      debug: ['🐞 Bug squashed!', 'The Algorithm Grove to the south is open. One problem stands between you and the community.'],
-      dsa: ['🏆 Quest complete!', 'The Community Camp by the lake is open. Job links and HR emails are waiting for you.'],
-    }[kind];
-    this.toast(msg[0], `${msg[1]} <b>${run?.points ?? 0} pts</b>`, kind === 'dsa' ? '#ffd27a' : '#7fd6c2', 7000);
-    this.celebrate();
+    const msg = skipped
+      ? {
+          arrow: ['⏭ Arrow Range skipped', 'Your rifle is unlocked anyway: press <kbd>B</kbd> for battle. Next stop: the Debug Den in the west.'],
+          debug: ['⏭ Debug Den skipped', 'The Algorithm Grove to the south is open. Follow the golden arrow.'],
+          dsa: ['⏭ Algorithm Grove skipped', 'The Community Camp by the lake is open. Job links and HR emails are waiting for you.'],
+        }[kind]
+      : {
+          arrow: ['🏹 Rifle earned!', 'Press <kbd>B</kbd> to start a battle any time. Next stop: the Debug Den in the west. Follow the golden arrow.'],
+          debug: ['🐞 Bug squashed!', 'The Algorithm Grove to the south is open. One problem stands between you and the community.'],
+          dsa: ['🏆 Quest complete!', 'The Community Camp by the lake is open. Job links and HR emails are waiting for you.'],
+        }[kind];
+    this.toast(msg[0], `${msg[1]} <b>${run?.points ?? 0} pts</b>`, kind === 'dsa' || !skipped ? (kind === 'dsa' ? '#ffd27a' : '#7fd6c2') : '#f2b35c', 7000);
+    if (!skipped || kind === 'dsa') this.celebrate();
     this.exp.audio.chime('open');
   }
 

@@ -16,6 +16,7 @@ import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import type { Assets } from '../core/Assets';
 import { esc } from './api';
+import { skipButtonHTML, wireSkip } from './skip';
 
 export interface ArrowRound {
   prompt: string;
@@ -273,6 +274,8 @@ export class ArrowGame {
     private onFinish: (r: ArrowResult) => void,
     private onExit: () => void,
     private assets?: Assets,
+    /** Skip button: unlocks the next stage with 0 points for this one. */
+    onSkip?: () => Promise<void>,
   ) {
     this.root = document.createElement('div');
     this.root.className = 'arrow-game three';
@@ -281,6 +284,7 @@ export class ArrowGame {
       <canvas class="ag-overlay"></canvas>
       <div class="ag-top">
         <div class="ag-round"><span class="ag-kicker">Round <b class="ag-rn">1</b>/${rounds.length}</span><span class="ag-prompt"></span></div>
+        ${onSkip ? skipButtonHTML() : ''}
         <button class="ag-exit" aria-label="Leave the range">✕</button>
       </div>
       <div class="ag-hud">
@@ -304,6 +308,7 @@ export class ArrowGame {
     this.renderer.shadowMap.enabled = !TOUCH;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.root.querySelector('.ag-exit')!.addEventListener('click', () => this.close(true));
+    if (onSkip) wireSkip(this.root, onSkip);
 
     this.buildWorld();
     this.buildBow();

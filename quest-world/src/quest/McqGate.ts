@@ -2,6 +2,7 @@
 
 import gsap from 'gsap';
 import { esc, play, quest, refreshQuest } from './api';
+import { skipButtonHTML, skipStage, wireSkip } from './skip';
 
 interface McqResult {
   correct: number;
@@ -22,14 +23,16 @@ export class McqGate {
     const q = quest.view!.quest;
     const done = quest.view!.run && quest.view!.run.stage !== 'mcq';
     if (done) {
-      this.host.innerHTML = `<div class="mcq-done"><span>✔</span><div><strong>Gate Quiz passed</strong><p>${quest.view!.run!.mcqScore ?? q.passMark}/5 correct. The gate is open.</p></div></div>`;
+      this.host.innerHTML = quest.view!.run!.skipped?.includes('mcq')
+        ? `<div class="mcq-done skipped"><span>⏭</span><div><strong>Gate Quiz skipped</strong><p>0 points for the quiz. The gate is open.</p></div></div>`
+        : `<div class="mcq-done"><span>✔</span><div><strong>Gate Quiz passed</strong><p>${quest.view!.run!.mcqScore ?? q.passMark}/5 correct. The gate is open.</p></div></div>`;
       this.onPass();
       return;
     }
     this.host.innerHTML = `
       <header class="mcq-head">
         <div><small>Stage 1 · Gate Quiz</small><strong>Answer ${q.mcq.length} questions</strong></div>
-        <span class="mcq-need">${q.passMark}/${q.mcq.length} to enter</span>
+        <div class="mcq-head-r"><span class="mcq-need">${q.passMark}/${q.mcq.length} to enter</span>${skipButtonHTML()}</div>
       </header>
       <form class="mcq-form">
         ${q.mcq
@@ -56,6 +59,14 @@ export class McqGate {
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       this.submit(form);
+    });
+    wireSkip(this.host, async () => {
+      try {
+        await skipStage('mcq');
+        this.render(); // shows "Gate Quiz skipped" and opens the gate
+      } catch (err) {
+        alert((err as Error).message);
+      }
     });
     gsap.from(this.host.querySelectorAll('.mcq-q'), { y: 18, opacity: 0, stagger: 0.07, duration: 0.5, ease: 'power3.out', delay: 0.2 });
   }

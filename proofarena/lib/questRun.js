@@ -5,6 +5,8 @@ import { awardXp } from './scoring';
 
 const XP = { mcq: 100, arrow: 200, debug: 250, dsa: 400 };
 const NEXT = { mcq: 'arrow', arrow: 'debug', debug: 'dsa', dsa: 'done' };
+const ORDER = ['mcq', 'arrow', 'debug', 'dsa', 'done'];
+const STAGE_NAME = { mcq: 'Gate Quiz', arrow: 'Arrow Range', debug: 'Debug Den', dsa: 'Algorithm Grove', snake: 'Snake Debug' };
 
 function findRun(db, questId, studentId) {
   return db.questRuns.find((r) => r.questId === questId && r.studentId === studentId);
@@ -73,7 +75,8 @@ export function questView(questId, studentId) {
     snake: {
       options: BUG_TYPES,
       done: !!run?.snake?.done,
-      bugLines: run?.snake?.done ? bugLinesFor(quest.debug) : [],
+      // A skipped Snake Debug doesn't earn the hint of where the bug is.
+      bugLines: run?.snake?.done && !run.snake.skipped ? bugLinesFor(quest.debug) : [],
     },
   };
 }
@@ -100,12 +103,12 @@ function ensureRun(db, quest, studentId) {
   return run;
 }
 
-function advance(db, run, stage, points, text) {
+function advance(db, run, stage, points, text, { skipped = false } = {}) {
   run.points += points;
   run.stage = NEXT[stage];
-  run.log.push({ stage, at: new Date().toISOString(), points });
+  run.log.push({ stage, at: new Date().toISOString(), points, ...(skipped ? { skipped: true } : {}) });
   const student = db.students.find((s) => s.id === run.studentId);
-  awardXp(student, XP[stage], stage === 'dsa' ? 'quest-champion' : null);
+  if (!skipped) awardXp(student, XP[stage], stage === 'dsa' ? 'quest-champion' : null);
   if (stage === 'arrow') run.rifle = true;
   if (run.stage === 'done') run.finishedAt = new Date().toISOString();
   logActivity(db, `${student.name} ${text}`, student.id);
@@ -123,6 +126,35 @@ export async function playStage(questId, studentId, action, payload) {
       if (run?.stage !== 'done') throw new Error('Finish all four stages to join the community');
       run.joinedAt ||= new Date().toISOString();
       return { ok: true };
+    });
+  }
+  if (action === 'skip') {
+    // The player skips the game in front of them: the next one unlocks, with 0 points and no XP for this one.
+    // The skip is recorded (run.skipped) so the company sees it next to the player's attempts.
+    const stage = String(payload.stage || '');
+    if (stage === 'snake') {
+      if (current !== 'debug') throw new Error(current === 'done' ? 'You already finished this quest' : `Finish the ${STAGE_NAME[current] || current} first`);
+      return updateDb((db) => {
+        const run = ensureRun(db, quest, studentId);
+        run.snake ||= { done: false, wrong: 0, games: 0 };
+        if (!run.snake.done) {
+          run.snake.done = true;
+          run.snake.skipped = true;
+          run.skipped = [...new Set([...(run.skipped || []), 'snake'])];
+        }
+        return { skipped: 'snake', stage: run.stage };
+      });
+    }
+    if (!NEXT[stage]) throw new Error('Unknown stage');
+    // Already past this stage (e.g. passed it a moment ago in another tab): nothing to skip.
+    if (ORDER.indexOf(current) > ORDER.indexOf(stage)) return { skipped: stage, already: true, stage: current };
+    if (current !== stage) throw new Error(`Finish the ${STAGE_NAME[current]} first`);
+    return updateDb((db) => {
+      const run = ensureRun(db, quest, studentId);
+      if (run.stage !== stage) return { skipped: stage, already: true, stage: run.stage };
+      run.skipped = [...new Set([...(run.skipped || []), stage])];
+      advance(db, run, stage, 0, `skipped the ${STAGE_NAME[stage]} in ${quest.title}`, { skipped: true });
+      return { skipped: stage, stage: run.stage };
     });
   }
   if (action === 'snake') {
