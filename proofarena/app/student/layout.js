@@ -121,6 +121,11 @@ function Shell({ children }) {
           </Link>
         </nav>
       </header>
+      {state.storage === 'per-instance' && (
+        <div className="bg-amber-100 text-amber-900 text-xs px-4 py-2 text-center">
+          Live data isn&apos;t shared between servers yet, so submissions and quests can disappear. Connect Upstash Redis in Vercel (Storage) and redeploy.
+        </div>
+      )}
       <main className="flex-1 min-w-0">{children}</main>
     </div>
   );

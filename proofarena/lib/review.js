@@ -3,6 +3,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { readDb, updateDb, logActivity, uid } from './db';
 import { submissionDir } from './paths';
+import { resolveSource, snapshotOf } from './restore';
 import { getChallenge, challengeTestPath } from './challenge';
 import { runNodeTests } from './runner';
 import { fetchSource, copyProject, readFiles, listFiles, countLines, isPlatformFile } from './workspace';
@@ -97,9 +98,10 @@ export async function runReviewPipeline(id) {
 
   try {
     await step(id, 'fetch', async () => {
-      const r = await fetchSource(sub.source, original);
+      const r = await fetchSource(resolveSource(sub.source), original);
       copyProject(original, current);
-      patchSub(id, (s) => Object.assign(s, { commit: r.commit, sourceKind: r.kind }));
+      // Kept in the database too, so any server instance can rebuild the folders (see restore.js).
+      patchSub(id, (s) => Object.assign(s, { commit: r.commit, sourceKind: r.kind, files: snapshotOf(original) }));
       return `${r.kind === 'github' ? 'Cloned from GitHub' : 'Copied from local folder'} · commit ${r.commit}`;
     });
 

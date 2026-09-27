@@ -112,7 +112,14 @@ function Shell({ children }) {
           <ResetButton />
         </div>
       </aside>
-      <main className="min-w-0 p-4 sm:p-5 lg:p-8">{children}</main>
+      <main className="min-w-0 p-4 sm:p-5 lg:p-8">
+        {state.storage === 'per-instance' && (
+          <div className="mb-4 rounded-xl bg-amber-100 text-amber-900 text-xs px-4 py-2 text-center">
+            Live data isn&apos;t shared between servers yet, so submissions and quests can disappear. Connect Upstash Redis in Vercel (Storage) and redeploy.
+          </div>
+        )}
+        {children}
+      </main>
     </div>
   );
 }

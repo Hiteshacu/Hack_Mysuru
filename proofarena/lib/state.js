@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { readDb } from './db';
+import { readDb, remoteStore } from './db';
 import { ROOT } from './paths';
 import { computeScore, levelFor } from './scoring';
 import { listLibrary } from './challenge';
@@ -11,7 +11,8 @@ import { suggestVivaScore } from './missions';
 // Everything the UI needs in one response. Small enough for a demo.
 export function buildState() {
   const db = readDb();
-  const submissions = db.submissions.map((s) => ({
+  // files / snapshot are the stored project copies (restore.js): too big to send on every poll.
+  const submissions = db.submissions.map(({ files, snapshot, ...s }) => ({
     ...s,
     score: computeScore(s),
     pipelineLabels: PIPELINE,
@@ -29,7 +30,7 @@ export function buildState() {
   });
   return {
     ...db,
-    sessions: db.sessions.map(({ mutation, baselinePassing, ...rest }) => rest),
+    sessions: db.sessions.map(({ mutation, baselinePassing, files, ...rest }) => rest),
     // Quest answers, reference solutions and hidden tests stay on the server (the 3D world gets publicQuest).
     quests: db.quests.map(({ mcq, arrows, debug, dsa, ...rest }) => rest),
     submissions,
@@ -40,6 +41,8 @@ export function buildState() {
     aiProvider: aiProvider()?.label || null,
     smsProvider: smsProvider(),
     smsSetup: smsSetup(),
+    // 'per-instance' = hosted without Redis: each server keeps its own data, so things seem to vanish.
+    storage: remoteStore ? 'shared' : process.env.VERCEL ? 'per-instance' : 'local',
     demoProjectPath: path.resolve(ROOT, '..', 'student-project'),
   };
 }

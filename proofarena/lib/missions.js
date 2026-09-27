@@ -9,6 +9,7 @@ import { copyProject, listFiles, safeJoin, diffDirs, isPlatformFile } from './wo
 import { findMutation, applyMutation, studentTestFiles } from './review';
 import { awardXp, BADGES } from './scoring';
 import { aiVivaQuestions, aiCodeVivaQuestions, aiProvider } from './ai';
+import { ensureSubmissionFiles, snapshotOf } from './restore';
 
 const ORDER = ['bug-hunt', 'fix-review', 'plot-twist', 'viva'];
 const MISSION_TEST = 'tests/proofarena-mission.test.js';
@@ -69,7 +70,7 @@ export async function prepareCodeViva(submissionId) {
   const sub = readDb().submissions.find((s) => s.id === submissionId);
   const challenge = getChallenge(sub.challengeId);
   const files = {};
-  const original = path.join(submissionDir(submissionId), 'original');
+  const { original } = await ensureSubmissionFiles(sub);
   for (const rel of listFiles(original)) files[rel] = fs.readFileSync(path.join(original, rel), 'utf8');
   const aiQs = await aiCodeVivaQuestions({ challenge, files });
   const questions = (aiQs || templateCodeViva(files)).map((q, i) => ({ id: `q${i + 1}`, ...q }));
@@ -95,22 +96,8 @@ export async function startSession(submissionId, missionId) {
   const def = getMissionDef(sub.challengeId, missionId);
   const id = uid('ses');
   const dir = sessionDir(submissionId, id);
-  const work = path.join(dir, 'work');
-  const current = path.join(submissionDir(submissionId), 'current');
-  copyProject(current, work);
-
-  let mutation = null;
-  if (missionId === 'bug-hunt') {
-    mutation = findMutation(challenge, work);
-    if (mutation) applyMutation(work, mutation);
-  }
-
-  const testsDir = path.dirname(challengeTestPath(challenge.id, '_helper.js'));
-  fs.mkdirSync(path.join(work, 'tests'), { recursive: true });
-  fs.copyFileSync(path.join(testsDir, '_helper.js'), path.join(work, MISSION_HELPER));
-  const testSource = fs.readFileSync(path.join(testsDir, def.testFile), 'utf8').replace("require('./_helper')", "require('./proofarena-helper')");
-  fs.writeFileSync(path.join(work, MISSION_TEST), testSource);
-  copyProject(work, path.join(dir, 'base'));
+  const { current } = await ensureSubmissionFiles(sub);
+  const mutation = prepareWorkspace({ challenge, def, current, dir, missionId });
 
   const baseline = await runNodeTests({
     cwd: current,
@@ -139,22 +126,54 @@ export async function startSession(submissionId, missionId) {
   return id;
 }
 
-function loadSession(id) {
+// The mission's working copy: the student's current code, the planted bug (Bug Hunt) and the mission tests.
+// `mutation` is passed when rebuilding a session, so the same bug is planted again.
+function prepareWorkspace({ challenge, def, current, dir, missionId, mutation }) {
+  const work = path.join(dir, 'work');
+  copyProject(current, work);
+  if (mutation) applyMutation(work, mutation);
+  else if (missionId === 'bug-hunt') {
+    mutation = findMutation(challenge, work);
+    if (mutation) applyMutation(work, mutation);
+  }
+  const testsDir = path.dirname(challengeTestPath(challenge.id, '_helper.js'));
+  fs.mkdirSync(path.join(work, 'tests'), { recursive: true });
+  fs.copyFileSync(path.join(testsDir, '_helper.js'), path.join(work, MISSION_HELPER));
+  const testSource = fs.readFileSync(path.join(testsDir, def.testFile), 'utf8').replace("require('./_helper')", "require('./proofarena-helper')");
+  fs.writeFileSync(path.join(work, MISSION_TEST), testSource);
+  copyProject(work, path.join(dir, 'base'));
+  return mutation || null;
+}
+
+async function loadSession(id) {
   const db = readDb();
   const session = db.sessions.find((s) => s.id === id);
   if (!session) throw new Error('Session not found');
   const sub = db.submissions.find((s) => s.id === session.submissionId);
-  return { db, session, sub, work: path.join(sessionDir(sub.id, id), 'work'), dir: sessionDir(sub.id, id) };
+  if (!sub) throw new Error('Submission not found');
+  const dir = sessionDir(sub.id, id);
+  const work = path.join(dir, 'work');
+  if (!listFiles(work).length) {
+    // This server instance never saw the session: rebuild it, then replay the student's saved edits.
+    const { current } = await ensureSubmissionFiles(sub);
+    prepareWorkspace({ challenge: getChallenge(sub.challengeId), def: getMissionDef(sub.challengeId, session.missionId), current, dir, missionId: session.missionId, mutation: session.mutation });
+    for (const [rel, content] of Object.entries(session.files || {})) {
+      const full = safeJoin(work, rel);
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, content);
+    }
+  }
+  return { db, session, sub, work, dir };
 }
 
-export function sessionView(id) {
-  const { db, session, sub, work } = loadSession(id);
+export async function sessionView(id) {
+  const { db, session, sub, work } = await loadSession(id);
   const def = getMissionDef(sub.challengeId, session.missionId);
   const files = listFiles(work)
     .filter((p) => p !== MISSION_HELPER)
     .map((p) => ({ path: p, content: fs.readFileSync(path.join(work, p), 'utf8'), readOnly: isPlatformFile(p) }));
   const student = db.students.find((s) => s.id === sub.studentId);
-  const { mutation, baselinePassing, ...safe } = session;
+  const { mutation, baselinePassing, files: _edits, ...safe } = session;
   return {
     session: { ...safe, elapsedSec: secondsSince(session.startedAt) },
     mission: { ...def, hints: undefined, hintCount: def.hints?.length || 0, hintsShown: (def.hints || []).slice(0, session.hintsUsed) },
@@ -168,8 +187,8 @@ function pushEvent(session, event) {
   session.events.push({ t: secondsSince(session.startedAt), ...event });
 }
 
-export function saveFile(id, rel, content) {
-  const { work } = loadSession(id);
+export async function saveFile(id, rel, content) {
+  const { work } = await loadSession(id);
   if (isPlatformFile(rel)) throw new Error('Mission test files are read-only');
   if (!/^(src|tests|docs)\/[\w\-./]+\.(js|cjs|mjs|json|md)$/.test(rel)) throw new Error('You can only edit .js, .json or .md files in src/, tests/ or docs/');
   const full = safeJoin(work, rel);
@@ -185,6 +204,7 @@ export function saveFile(id, rel, content) {
   }
   updateDb((db) => {
     const session = db.sessions.find((s) => s.id === id);
+    (session.files ||= {})[rel] = content; // so another server instance can rebuild this workspace
     const last = session.events[session.events.length - 1];
     const now = secondsSince(session.startedAt);
     if (last && last.type === 'edit' && last.file === rel && now - last.t < 20) {
@@ -198,7 +218,7 @@ export function saveFile(id, rel, content) {
 }
 
 export async function runSession(id) {
-  const { work } = loadSession(id);
+  const { work } = await loadSession(id);
   const env = { PA_WORKSPACE: work };
   const mission = await runNodeTests({ cwd: work, files: [path.join(work, MISSION_TEST)], env });
   const own = await runNodeTests({ cwd: work, files: studentTestFiles(work), env });
@@ -282,7 +302,7 @@ export function templateVivaQuestions(sub) {
 }
 
 export async function submitSession(id) {
-  const { session, sub, work, dir } = loadSession(id);
+  const { session, sub, work, dir } = await loadSession(id);
   if (session.status !== 'active') throw new Error('This mission is already finished');
   const challenge = getChallenge(sub.challengeId);
   const def = getMissionDef(sub.challengeId, session.missionId);
@@ -343,6 +363,7 @@ export async function submitSession(id) {
     s.status = 'passed';
     pushEvent(s, { type: 'submit', ok: true, text: 'All mission tests pass, no regressions' });
     const liveSub = db.submissions.find((x) => x.id === sub.id);
+    liveSub.snapshot = snapshotOf(grade); // the project after this mission, for any server instance
     const m = liveSub.missions.find((x) => x.id === session.missionId);
     m.attempts += 1;
     m.status = 'passed';

@@ -9,6 +9,7 @@ import { copyProject, listFiles, readFiles, diffDirs, fetchSource } from './work
 import { findMutation, applyMutation, studentTestFiles } from './review';
 import { templateVivaQuestions } from './missions';
 import { aiMissionFix, aiVivaAnswers, aiProvider } from './ai';
+import { ensureSubmissionFiles, resolveSource, DEMO_PROJECT } from './restore';
 
 // Live Round answer key for one submission, for the company: what to paste into each mission so it clears.
 // Every code answer is worked out on a scratch copy of the student's own project and re-run against the
@@ -79,15 +80,20 @@ async function corePassing(challenge, dir) {
 
 /** The student's project as it is now (after the missions they already cleared). */
 async function projectCopy(sub, dest) {
+  if (sub.sample) throw new Error('This is a sample submission from the demo data: it has no code to build answers from.');
+  if (sub.snapshot || sub.files) {
+    const { current } = await ensureSubmissionFiles(sub);
+    copyProject(current, dest);
+    return 'current';
+  }
   for (const dir of [path.join(submissionDir(sub.id), 'current'), path.join(submissionDir(sub.id), 'original')]) {
     if (listFiles(dir).length) {
       copyProject(dir, dest);
       return dir.endsWith('current') ? 'current' : 'original';
     }
   }
-  if (sub.sample) throw new Error('This is a sample submission from the demo data: it has no code to build answers from.');
   try {
-    await fetchSource(sub.source, dest);
+    await fetchSource(resolveSource(sub.source), dest);
     return 'source';
   } catch (err) {
     throw new Error(`Could not load ${sub.source}: ${err.message}`);
@@ -172,15 +178,15 @@ function submissionFor(db, submissionId, posted) {
   if (known) return known;
   if (!posted || posted.id !== submissionId || !Array.isArray(posted.missions)) throw new Error('Submission not found');
   const source = String(posted.source || '').trim();
-  const demo = path.resolve(ROOT, '..', 'student-project');
-  const allowed = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+(\.git)?\/?$/.test(source) || path.resolve(source) === demo;
+  const demo = DEMO_PROJECT;
+  const allowed = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+(\.git)?\/?$/.test(source) || resolveSource(source) === demo;
   if (!allowed) throw new Error('Submission not found on this server. Connect Upstash Redis in Vercel so every page shares the same data.');
   return {
     id: posted.id,
     studentId: String(posted.studentId || ''),
     challengeId: String(posted.challengeId || ''),
     track: posted.track,
-    source: path.resolve(source) === demo ? demo : source,
+    source: resolveSource(source) === demo ? demo : source,
     sample: !!posted.sample,
     missions: posted.missions.map((m) => ({ id: String(m.id), status: String(m.status), result: m.result || null })),
     comments: Array.isArray(posted.comments) ? posted.comments : [],

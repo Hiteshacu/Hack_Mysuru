@@ -14,7 +14,7 @@ export const POST = handle(async (request, { params }) => {
   const b = await body(request);
   switch (b.action) {
     case 'save':
-      saveFile(sid, b.path, b.content);
+      await saveFile(sid, b.path, b.content);
       return { ok: true };
     case 'run':
       return runSession(sid);
