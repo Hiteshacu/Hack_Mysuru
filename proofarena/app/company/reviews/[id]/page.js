@@ -286,7 +286,7 @@ function ReviewDone({ sub, state, refresh }) {
           </div>
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" href={`/company/candidates/${student.id}`}>Open {student.name}&apos;s full dossier</Button>
-            {!sub.sample && <DownloadAnswers sub={sub} />}
+            {!sub.sample && <DownloadAnswers sub={sub} studentName={student.name} />}
             {!sub.sample && sub.status !== 'complete' && (
               <Button variant="dark" href={sub.track === 'review' ? `/student/viva/${sub.id}` : `/student/arena/${sub.id}`} className="bg-violet-700 hover:bg-violet-800">
                 {sub.track === 'review' ? 'Switch to student · answer the viva' : 'Switch to student · play the Live Round'}
@@ -312,12 +312,18 @@ function ReviewDone({ sub, state, refresh }) {
 }
 
 // Live Round answer key: what to paste in each mission, checked against the real mission tests on the server.
-function DownloadAnswers({ sub }) {
+function DownloadAnswers({ sub, studentName }) {
   const [busy, setBusy] = useState(false);
   async function download() {
     setBusy(true);
     try {
-      const res = await fetch(`/api/submissions/${sub.id}/answers`, { cache: 'no-store' });
+      const { id, studentId, challengeId, track, source, sample, missions, comments, viva } = sub;
+      const res = await fetch(`/api/submissions/${sub.id}/answers`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        cache: 'no-store',
+        body: JSON.stringify({ submission: { id, studentId, challengeId, track, source, sample, missions, comments, viva: viva && { questions: viva.questions }, studentName } }),
+      });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Could not build the answers');
       const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '')?.[1] || `${sub.id}-live-round-answers.txt`;
       const url = URL.createObjectURL(await res.blob());

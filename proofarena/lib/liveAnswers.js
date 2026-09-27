@@ -162,15 +162,39 @@ function templateAnswer(q, notes) {
   );
 }
 
-export async function liveRoundAnswers(submissionId) {
+/**
+ * The submission as the company page shows it. Without a shared store (Redis) each server instance keeps its own
+ * data, so this instance may not know it: then the record sent by the page is used, but only for code the server
+ * can load itself (a GitHub repo or the bundled demo project), never an arbitrary folder.
+ */
+function submissionFor(db, submissionId, posted) {
+  const known = db.submissions.find((s) => s.id === submissionId);
+  if (known) return known;
+  if (!posted || posted.id !== submissionId || !Array.isArray(posted.missions)) throw new Error('Submission not found');
+  const source = String(posted.source || '').trim();
+  const demo = path.resolve(ROOT, '..', 'student-project');
+  const allowed = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+(\.git)?\/?$/.test(source) || path.resolve(source) === demo;
+  if (!allowed) throw new Error('Submission not found on this server. Connect Upstash Redis in Vercel so every page shares the same data.');
+  return {
+    id: posted.id,
+    studentId: String(posted.studentId || ''),
+    challengeId: String(posted.challengeId || ''),
+    track: posted.track,
+    source: path.resolve(source) === demo ? demo : source,
+    sample: !!posted.sample,
+    missions: posted.missions.map((m) => ({ id: String(m.id), status: String(m.status), result: m.result || null })),
+    comments: Array.isArray(posted.comments) ? posted.comments : [],
+    viva: posted.viva && Array.isArray(posted.viva.questions) ? { questions: posted.viva.questions.map((q, i) => ({ id: String(q.id || `q${i + 1}`), q: String(q.q || ''), about: String(q.about || '') })) } : null,
+  };
+}
+
+export async function liveRoundAnswers(submissionId, posted) {
   const db = readDb();
-  const sub = db.submissions.find((s) => s.id === submissionId);
-  if (!sub) throw new Error('Submission not found');
-  if (!db.activeCompanyId) throw new Error('Open the company dashboard first');
+  const sub = submissionFor(db, submissionId, posted);
   if (!sub.missions?.length) throw new Error('Publish the review first: the Live Round is created when the review is published.');
   const challenge = getChallenge(sub.challengeId);
   if (!challenge) throw new Error('Challenge not found');
-  const student = db.students.find((s) => s.id === sub.studentId);
+  const student = db.students.find((s) => s.id === sub.studentId) || (posted?.studentName ? { name: String(posted.studentName) } : null);
 
   const out = [];
   const line = (s = '') => out.push(s);
@@ -187,7 +211,7 @@ export async function liveRoundAnswers(submissionId) {
   try {
     const track = challenge.track === 'review' || sub.track === 'review' ? 'review' : 'full';
     const from = await projectCopy(sub, work);
-    if (from !== 'current') line(`(Built from the ${from === 'original' ? 'submitted' : 'source'} code; the student's latest mission changes were not found on this server.)`);
+    if (from !== 'current' && sub.missions.some((m) => m.status === 'passed' && m.id !== 'viva')) line(`(Built from the ${from === 'original' ? 'submitted' : 'source'} code; the student's latest mission changes were not found on this server.)`);
 
     for (const id of ORDER) {
       const m = sub.missions.find((x) => x.id === id);
