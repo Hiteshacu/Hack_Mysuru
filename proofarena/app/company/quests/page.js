@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
-import { Gamepad2, Plus, Megaphone, Play, ListChecks, Crosshair, Bug, Code2, Users, Trophy, RotateCcw } from 'lucide-react';
+import { Gamepad2, Plus, Megaphone, Play, ListChecks, Crosshair, Bug, Code2, Users, Trophy, RotateCcw, Download } from 'lucide-react';
 import { useShared } from '@/components/state-context';
 import { Card, Button, Pill, Empty, SectionTitle, Avatar } from '@/components/ui';
 import { api } from '@/lib/client';
@@ -20,6 +20,7 @@ const STAGES = [
 export default function Quests() {
   const { state, refresh } = useShared();
   const [resetting, setResetting] = useState(null);
+  const [downloading, setDownloading] = useState(null);
   const mine = state.quests.filter((q) => q.companyId === state.activeCompanyId);
   const reset = async (q) => {
     if (!confirm(`Reset every student's progress on "${q.title}"? They can play it again from the start.`)) return;
@@ -32,6 +33,29 @@ export default function Quests() {
       toast(err.message, 'error');
     } finally {
       setResetting(null);
+    }
+  };
+
+  // The full answer key (quiz, arrows, snake, debug fix, DSA solution) as a text file, for the company only.
+  const downloadAnswers = async (q) => {
+    setDownloading(q.id);
+    try {
+      const res = await fetch(`/api/quests/${q.id}/answers`, { cache: 'no-store' });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Could not download the answers');
+      const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '')?.[1] || `${q.id}-answers.txt`;
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast('Answer key downloaded');
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      setDownloading(null);
     }
   };
 
@@ -89,7 +113,8 @@ export default function Quests() {
                       <Pill color="amber">Pass: {q.passMark}/5 MCQs</Pill>
                     </div>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" icon={Download} loading={downloading === q.id} onClick={() => downloadAnswers(q)}>Download answers</Button>
                     <Button size="sm" variant="outline" icon={Megaphone} href={`/company/notify?quest=${q.id}`}>Notify students</Button>
                     <Button size="sm" icon={Play} href={`/quest/index.html?quest=${q.id}&student=hitesh`}>Play as Hitesh</Button>
                   </div>
