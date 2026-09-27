@@ -132,7 +132,15 @@ function Notify() {
               <span>Twilio is connected. Students with a real number (set in <code>DEMO_PHONES</code>) get a real SMS; placeholder demo numbers are skipped.</span>
             ) : (
               <span>
-                <b>SMS is simulated.</b> The demo students have placeholder numbers. To send real SMS, add <code>TWILIO_ACCOUNT_SID</code>, <code>TWILIO_AUTH_TOKEN</code> and <code>TWILIO_FROM</code> to <code>.env.local</code>. In-app notifications always work.
+                <b>SMS is not connected, so nothing is really sent.</b>{' '}
+                {state.smsSetup?.missing?.length ? (
+                  <>
+                    Missing setting{state.smsSetup.missing.length > 1 ? 's' : ''}: <b>{state.smsSetup.missing.join(', ')}</b>. Add{' '}
+                    {state.smsSetup.missing.length > 1 ? 'them' : 'it'} in Vercel → Settings → Environment Variables (tick <b>Production</b>), then Redeploy.
+                  </>
+                ) : (
+                  <>Add TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and TWILIO_FROM, then redeploy.</>
+                )}
               </span>
             )}
           </div>

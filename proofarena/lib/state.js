@@ -4,7 +4,7 @@ import { ROOT } from './paths';
 import { computeScore, levelFor } from './scoring';
 import { listLibrary } from './challenge';
 import { aiEnabled, aiProvider } from './ai';
-import { smsProvider, phoneFor, maskPhone, isPlaceholder } from './sms';
+import { smsProvider, smsSetup, phoneFor, maskPhone, isPlaceholder } from './sms';
 import { PIPELINE } from './review';
 import { suggestVivaScore } from './missions';
 
@@ -39,6 +39,7 @@ export function buildState() {
     aiEnabled: aiEnabled(),
     aiProvider: aiProvider()?.label || null,
     smsProvider: smsProvider(),
+    smsSetup: smsSetup(),
     demoProjectPath: path.resolve(ROOT, '..', 'student-project'),
   };
 }

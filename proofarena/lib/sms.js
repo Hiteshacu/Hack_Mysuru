@@ -105,3 +105,10 @@ export function deliveryHint(code) {
   };
   return hints[Number(code)] || '';
 }
+
+/** Which Twilio settings are present (names only, never values), so the Notify page can say what's missing. */
+export function smsSetup() {
+  const has = (k) => !!String(process.env[k] || '').trim();
+  const missing = ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_FROM', 'DEMO_PHONES'].filter((k) => !has(k));
+  return { missing };
+}
