@@ -42,8 +42,41 @@ function Shell({ children }) {
   };
 
   return (
-    <div className="flex-1 grid lg:grid-cols-[240px_1fr] min-h-screen">
-      <aside className="bg-white border-r border-slate-200 p-4 flex flex-col gap-6 lg:sticky lg:top-0 lg:h-screen">
+    <div className="flex-1 grid grid-cols-1 lg:grid-cols-[240px_1fr] min-h-screen">
+      {/* Phones and tablets: a compact sticky header with swipeable section pills instead of the tall sidebar. */}
+      <header className="lg:hidden sticky top-0 z-30 min-w-0 bg-white/95 backdrop-blur border-b border-slate-200">
+        <div className="flex items-center gap-3 px-4 h-14">
+          <Logo />
+          <div className="ml-auto flex items-center gap-2 min-w-0">
+            <CompanyLogo company={company} size={28} />
+            <span className="text-sm font-semibold truncate max-w-[40vw]">{company.name}</span>
+          </div>
+        </div>
+        <nav className="flex gap-1.5 overflow-x-auto px-3 pb-2 [scrollbar-width:none]" aria-label="Company (mobile)">
+          {NAV.map((n) => {
+            const active = n.href === '/company' ? pathname === '/company' : pathname.startsWith(n.href);
+            const count = n.count ? counts[n.count] : 0;
+            return (
+              <Link
+                key={n.href}
+                href={n.href}
+                className={cx(
+                  'shrink-0 inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-semibold whitespace-nowrap ring-1',
+                  active ? 'bg-ink text-white ring-ink' : 'bg-white text-slate-700 ring-slate-200',
+                )}
+              >
+                <n.icon className="size-3.5" />
+                {n.label}
+                {count > 0 && <span className="rounded-full bg-rose-500 px-1.5 text-[10px] font-bold text-white">{count}</span>}
+              </Link>
+            );
+          })}
+          <Link href="/student" className="shrink-0 inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-semibold whitespace-nowrap bg-violet-50 text-violet-700 ring-1 ring-violet-100">
+            <GraduationCap className="size-3.5" /> Student view
+          </Link>
+        </nav>
+      </header>
+      <aside className="hidden lg:flex bg-white border-r border-slate-200 p-4 flex-col gap-6 lg:sticky lg:top-0 lg:h-screen">
         <Logo />
         <div className="flex items-center gap-3 rounded-2xl bg-slate-50 p-3">
           <CompanyLogo company={company} size={36} />
@@ -79,7 +112,7 @@ function Shell({ children }) {
           <ResetButton />
         </div>
       </aside>
-      <main className="min-w-0 p-5 lg:p-8">{children}</main>
+      <main className="min-w-0 p-4 sm:p-5 lg:p-8">{children}</main>
     </div>
   );
 }

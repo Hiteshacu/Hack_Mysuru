@@ -189,3 +189,11 @@ pre,
   outline: 2px solid #4338ca;
   outline-offset: 2px;
 }
+
+/* Phones: nothing may push the page wider than the screen (decorative glows, long rows).
+   `clip` (not `hidden`) keeps sticky headers working. */
+html,
+body {
+  overflow-x: clip;
+  -webkit-text-size-adjust: 100%;
+}

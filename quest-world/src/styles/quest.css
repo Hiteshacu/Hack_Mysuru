@@ -2578,3 +2578,9 @@ code,
     font-size: 0.85rem;
   }
 }
+/* iOS: momentum scrolling on the loading screen (the Gate Quiz is long on a phone). */
+.q-loader {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}

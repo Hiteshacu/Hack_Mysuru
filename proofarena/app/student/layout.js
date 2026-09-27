@@ -97,8 +97,31 @@ function Shell({ children }) {
             <ResetButton className="hidden 2xl:inline-flex !px-2 !py-1.5 text-xs whitespace-nowrap" />
           </div>
         </div>
+        {/* Phones: the same sections as a swipeable row of pills (the desktop nav is hidden below md). */}
+        <nav className="md:hidden flex gap-1.5 overflow-x-auto px-3 pb-2 -mt-1 [scrollbar-width:none]" aria-label="Student (mobile)">
+          {NAV.map((n) => {
+            const active = n.href === '/student' ? pathname === '/student' : pathname.startsWith(n.href);
+            return (
+              <Link
+                key={n.href}
+                href={n.href}
+                className={cx(
+                  'shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold inline-flex items-center gap-1 whitespace-nowrap ring-1',
+                  active ? 'bg-violet-600 text-white ring-violet-600' : 'bg-white text-slate-700 ring-slate-200',
+                )}
+              >
+                {n.quests && <Gamepad2 className="size-3.5" />}
+                {n.connect && (st?.unlocked ? <Handshake className="size-3.5" /> : <Lock className="size-3" />)}
+                {n.label}
+              </Link>
+            );
+          })}
+          <Link href="/company" className="shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold inline-flex items-center gap-1 whitespace-nowrap bg-indigo-50 text-indigo-700 ring-1 ring-indigo-100">
+            <Building2 className="size-3.5" /> Company
+          </Link>
+        </nav>
       </header>
-      <main className="flex-1">{children}</main>
+      <main className="flex-1 min-w-0">{children}</main>
     </div>
   );
 }
