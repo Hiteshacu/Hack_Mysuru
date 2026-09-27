@@ -258,7 +258,7 @@ function xpFor(def, { durationSec, hintsUsed, blindSpotClosed, srcFilesChanged, 
   return { lines, total: lines.reduce((n, l) => n + l.xp, 0), badges };
 }
 
-function templateVivaQuestions(sub) {
+export function templateVivaQuestions(sub) {
   const res = (id) => sub.missions.find((m) => m.id === id)?.result;
   const twistFiles = (res('plot-twist')?.changes || []).filter((c) => c.path.startsWith('src/')).map((c) => c.path);
   const bug = res('bug-hunt');

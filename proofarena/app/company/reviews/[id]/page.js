@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Check, X, Send, Bot, FileCode2, Plus, ArrowLeft, Mic, Sparkles, Swords } from 'lucide-react';
+import { Check, X, Send, Bot, FileCode2, Plus, ArrowLeft, Mic, Sparkles, Swords, Download } from 'lucide-react';
 import { useShared } from '@/components/state-context';
 import { Card, Button, Avatar, Pill, SectionTitle, Loading, Field, inputCls, cx, SEVERITY } from '@/components/ui';
 import { CodeViewer, InlineComment } from '@/components/code-viewer';
@@ -286,6 +286,7 @@ function ReviewDone({ sub, state, refresh }) {
           </div>
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" href={`/company/candidates/${student.id}`}>Open {student.name}&apos;s full dossier</Button>
+            {!sub.sample && <DownloadAnswers sub={sub} />}
             {!sub.sample && sub.status !== 'complete' && (
               <Button variant="dark" href={sub.track === 'review' ? `/student/viva/${sub.id}` : `/student/arena/${sub.id}`} className="bg-violet-700 hover:bg-violet-800">
                 {sub.track === 'review' ? 'Switch to student · answer the viva' : 'Switch to student · play the Live Round'}
@@ -307,6 +308,37 @@ function ReviewDone({ sub, state, refresh }) {
         </div>
       </Card>
     </div>
+  );
+}
+
+// Live Round answer key: what to paste in each mission, checked against the real mission tests on the server.
+function DownloadAnswers({ sub }) {
+  const [busy, setBusy] = useState(false);
+  async function download() {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/submissions/${sub.id}/answers`, { cache: 'no-store' });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Could not build the answers');
+      const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '')?.[1] || `${sub.id}-live-round-answers.txt`;
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast('Live Round answers downloaded');
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Button variant="outline" icon={Download} loading={busy} onClick={download} title="Checked against the real mission tests before download">
+      {busy ? 'Checking answers…' : 'Download Live Round answers'}
+    </Button>
   );
 }
 
