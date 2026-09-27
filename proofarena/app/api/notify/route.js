@@ -2,7 +2,7 @@ import { handle, body } from '@/lib/api';
 import { readDb, updateDb, uid, logActivity } from '@/lib/db';
 import { buildState } from '@/lib/state';
 import { candidates } from '@/lib/selectors';
-import { sendSms, smsProvider, phoneFor } from '@/lib/sms';
+import { sendSms, smsProvider, phoneFor, maskPhone, isPlaceholder } from '@/lib/sms';
 
 // "Notify others": sends a quest invite to top students by SMS (Twilio, if configured) and in-app.
 export const POST = handle(async (request) => {
@@ -26,7 +26,7 @@ export const POST = handle(async (request) => {
     const text = b.message.replace('{name}', s.name.split(' ')[0]).replace('{link}', link);
     const phone = phoneFor(s);
     const sms = channels.includes('sms') ? await sendSms(phone, text) : null;
-    deliveries.push({ studentId: s.id, name: s.name, phone: phone.replace(/\d(?=\d{4})/g, '•'), rank: ranked.indexOf(id) + 1 || null, sms: sms?.status || 'off', error: sms?.error, text });
+    deliveries.push({ studentId: s.id, name: s.name, phone: isPlaceholder(phone) ? phone : maskPhone(phone), rank: ranked.indexOf(id) + 1 || null, sms: sms?.status || 'off', error: sms?.error, text });
   }
 
   return updateDb((d) => {

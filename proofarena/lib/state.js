@@ -4,7 +4,7 @@ import { ROOT } from './paths';
 import { computeScore, levelFor } from './scoring';
 import { listLibrary } from './challenge';
 import { aiEnabled, aiProvider } from './ai';
-import { smsProvider } from './sms';
+import { smsProvider, phoneFor, maskPhone, isPlaceholder } from './sms';
 import { PIPELINE } from './review';
 import { suggestVivaScore } from './missions';
 
@@ -22,7 +22,10 @@ export function buildState() {
   const students = db.students.map((st) => {
     const subs = submissions.filter((s) => s.studentId === st.id && !s.archived && s.status !== 'failed');
     const best = subs.reduce((b, s) => (!b || s.score.total > b.score.total ? s : b), null);
-    return { ...st, level: levelFor(st.xp), bestSubmissionId: best?.id || null };
+    // A real number from DEMO_PHONES is shown masked (the full number never leaves the server).
+    const real = phoneFor(st);
+    const phone = isPlaceholder(real) ? st.phone : maskPhone(real);
+    return { ...st, phone, realPhone: !isPlaceholder(real), level: levelFor(st.xp), bestSubmissionId: best?.id || null };
   });
   return {
     ...db,

@@ -10,6 +10,16 @@ import { candidates } from '@/lib/selectors';
 import { api, timeAgo } from '@/lib/client';
 import { toast } from '@/components/toast';
 
+/** Plain-language fix for the most common Twilio errors. */
+function twilioHint(error = '') {
+  if (/unverified|21608/i.test(error)) return 'Fix: Twilio console → Phone Numbers → Verified Caller IDs → add this number (trial accounts can only text verified numbers).';
+  if (/permission|21408|geo/i.test(error)) return 'Fix: Twilio console → Messaging → Settings → Geo permissions → enable India.';
+  if (/not a valid|21211|21614/i.test(error)) return 'Fix: check the number in DEMO_PHONES (10 digits, or +91 followed by 10 digits).';
+  if (/From|21606|21659|21212/i.test(error)) return 'Fix: TWILIO_FROM must be your Twilio phone number in +1… form, with SMS enabled.';
+  if (/authenticate|20003/i.test(error)) return 'Fix: TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN are wrong. Re-copy them from the Twilio console and redeploy.';
+  return '';
+}
+
 export default function NotifyPage() {
   return (
     <Suspense>
@@ -170,10 +180,21 @@ function Notify() {
               <div className="flex flex-wrap gap-2">
                 {n.deliveries.map((d) => (
                   <Pill key={d.studentId} color={d.sms === 'sent' ? 'green' : d.sms === 'failed' ? 'rose' : 'slate'} icon={d.sms === 'failed' ? AlertTriangle : Smartphone}>
-                    {d.name}: SMS {d.sms}
+                    <span title={d.error || ''}>{d.name}: SMS {d.sms}{d.sms === 'sent' || d.sms === 'failed' ? ` to ${d.phone}` : ''}</span>
                   </Pill>
                 ))}
               </div>
+              {/* Show why Twilio refused a message (e.g. an unverified number on a trial account). */}
+              {n.deliveries
+                .filter((d) => d.sms === 'failed')
+                .map((d) => (
+                  <div key={d.studentId} className="flex gap-2 rounded-xl bg-rose-50 p-3 text-xs text-rose-900">
+                    <AlertTriangle className="size-4 shrink-0" />
+                    <span>
+                      <b>{d.name} ({d.phone}):</b> {d.error || 'Twilio did not accept the message.'} {twilioHint(d.error)}
+                    </span>
+                  </div>
+                ))}
             </Card>
           ))}
           <Link href="/student" className="text-sm font-semibold text-violet-700">Switch to student → see the notification</Link>

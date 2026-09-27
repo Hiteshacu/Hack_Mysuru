@@ -55,3 +55,10 @@ export async function sendSms(to, body) {
     return { status: 'failed', error: err.message };
   }
 }
+
+/** "+916363428833" → "+91 ••••••8833" (enough to recognise, without exposing the number). */
+export function maskPhone(phone) {
+  const n = e164(phone);
+  const m = /^(\+91|\+\d{1,3})(\d+)(\d{4})$/.exec(n);
+  return m ? `${m[1]} ${'•'.repeat(m[2].length)}${m[3]}` : n;
+}
