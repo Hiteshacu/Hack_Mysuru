@@ -1,0 +1,148 @@
+{
+  "id": "palace-pass",
+  "title": "Palace Pass",
+  "tagline": "A ticket booking API for Mysuru Palace entry slots during Dasara",
+  "difficulty": "Easy",
+  "estimatedHours": 4,
+  "skills": ["Node.js", "REST APIs", "Validation", "Testing", "Design for change"],
+  "stack": "Node.js 20+ (any framework, or none)",
+  "track": "full",
+  "verified": true,
+  "scope": {
+    "in": [
+      "GET /slots, POST /bookings, GET /bookings/:id, DELETE /bookings/:id",
+      "Seat capacity rules and input validation",
+      "Your own tests in tests/ (node:test)",
+      "README, docs/architecture.md, docs/decisions.md, ai.md"
+    ],
+    "out": [
+      "Login, payments or a frontend",
+      "A real database (in-memory is fine)",
+      "Deployment (optional, not scored)"
+    ]
+  },
+  "rules": [
+    "AI tools are allowed. Say what you used in ai.md.",
+    "Build it yourself: copied projects are caught because the Live Round uses your own code.",
+    "About 4 hours of work. Don't over-build.",
+    "Your code stays yours (MIT). Companies only see your proof, not your repo rights."
+  ],
+  "summary": "During Dasara, lakhs of visitors come to Mysuru Palace. Build the backend that lets visitors see time slots, book tickets and cancel bookings, without ever selling more tickets than a slot can hold.",
+  "requirements": [
+    "GET /slots lists every entry slot with its capacity and seats available",
+    "POST /bookings books tickets for a slot and returns the booking with its total price (₹100 per ticket)",
+    "A slot can never be overbooked (409 when there aren't enough seats)",
+    "Invalid requests return 400 with a helpful error message",
+    "GET /bookings/:id returns a booking, DELETE /bookings/:id cancels it and frees the seats",
+    "Write your own tests, a short architecture note and a decision log"
+  ],
+  "contract": [
+    "src/server.js must export createServer() returning a Node http.Server that is not yet listening",
+    "Each createServer() call starts with fresh seed data: DASARA-1000 (40 seats), DASARA-1400 (40 seats), LIGHTS-1900 (60 seats)",
+    "Errors are JSON: { \"error\": \"message\" }"
+  ],
+  "evaluation": [
+    { "label": "Hidden tests", "detail": "12 official tests you can't see" },
+    { "label": "Code review", "detail": "AI draft + company engineer confirms" },
+    { "label": "Docs & claims", "detail": "README claims are checked against the code" },
+    { "label": "Live Round", "detail": "3 missions inside your own code + viva" }
+  ],
+  "hiddenTests": "hidden-core.test.js",
+  "mutations": [
+    {
+      "id": "capacity-off-by-one",
+      "find": "(booked\\s*\\+\\s*[\\w.]+\\s*)>(\\s*[\\w.]*capacity)",
+      "replace": "$1>=$2",
+      "describe": "Changes the capacity check from > to >= so the last seats can never be sold"
+    }
+  ],
+  "missions": [
+    {
+      "id": "bug-hunt",
+      "level": 1,
+      "title": "Bug Hunt",
+      "kind": "Debugging",
+      "minutes": 20,
+      "xp": 200,
+      "testFile": "mission-bug-hunt.test.js",
+      "story": {
+        "headline": "\"Sold out\" with seats still free",
+        "from": "Palace ticket counter, Gate 3",
+        "message": "Visitors are angry. The 10:00 AM slot shows 2 seats left, but when a family books exactly 2 tickets, the system says the slot is sold out. We've planted this bug somewhere in your code. Find it and fix it.",
+        "logs": [
+          "10:02:11  GET  /slots                 200  DASARA-1000 available=2",
+          "10:02:14  POST /bookings  tickets=2   409  Not enough seats left in this slot",
+          "10:02:30  POST /bookings  tickets=1   201  PP-39",
+          "10:02:41  GET  /slots                 200  DASARA-1000 available=1"
+        ]
+      },
+      "goal": "Make the last seats of a slot bookable again, without allowing overbooking. Bonus: add a test to your own tests/ that would have caught this bug.",
+      "hints": [
+        "The bug is where your code decides whether a slot has enough seats.",
+        "Compare the operator in the capacity check with what \"exactly full\" should mean.",
+        "If 38 are booked and 2 more are requested, 38 + 2 = 40 must be allowed for a 40-seat slot."
+      ]
+    },
+    {
+      "id": "fix-review",
+      "level": 2,
+      "title": "Customer Complaint",
+      "kind": "Fix a review finding",
+      "minutes": 20,
+      "xp": 250,
+      "testFile": "mission-fix-review.test.js",
+      "story": {
+        "headline": "Someone booked -3 tickets",
+        "from": "Finance team, Mysuru Palace Board",
+        "message": "Last night's report shows a booking of -3 tickets with a total of ₹-300. The slot's seat count also went up by 3. Your code reviewer already flagged this. Fix it so bad ticket counts are rejected.",
+        "logs": [
+          "21:14:05  POST /bookings  tickets=-3   201  PP-112 total=-300",
+          "21:14:05  slot DASARA-1400 booked: 12 -> 9",
+          "21:15:40  POST /bookings  tickets=0    201  PP-113 total=0",
+          "21:16:02  POST /bookings  tickets=25   201  PP-114 total=2500"
+        ]
+      },
+      "goal": "Reject bookings unless tickets is a whole number from 1 to 10. Return 400 with a clear error message.",
+      "hints": [
+        "Check the ticket count before you touch the slot.",
+        "Number.isInteger(tickets) rejects \"2abc\", 2.5 and missing values in one go.",
+        "Throw your existing 400 error type so routes.js turns it into JSON."
+      ]
+    },
+    {
+      "id": "plot-twist",
+      "level": 3,
+      "boss": true,
+      "title": "Plot Twist",
+      "kind": "Change your own design",
+      "minutes": 45,
+      "xp": 500,
+      "testFile": "mission-plot-twist.test.js",
+      "story": {
+        "headline": "Dasara pricing changes tonight",
+        "from": "Palace Board meeting, 6:00 PM",
+        "message": "New rules start at midnight. Children under 12 pay ₹50 and adults pay ₹100. Groups of 5 or more people get 10% off. Every booking needs at least 1 adult and at most 10 people. Old apps still send { tickets }, so treat that as adults.",
+        "logs": [
+          "POST /bookings { adults: 2, children: 1 }   → total 250",
+          "POST /bookings { adults: 3, children: 2 }   → total 360 (10% off)",
+          "POST /bookings { adults: 0, children: 3 }   → 400",
+          "POST /bookings { tickets: 2 }               → total 200"
+        ]
+      },
+      "goal": "Support adults and children with the new prices. All old tests must keep passing. Fewer files changed means your design handled the change well.",
+      "hints": [
+        "Start by deciding where the new request fields are read and turned into a people count.",
+        "Your pricing rules may already live in one place. Can calculatePrice take adults and children?",
+        "Seats booked must be adults + children, and cancelling must free the same number."
+      ]
+    },
+    {
+      "id": "viva",
+      "level": 4,
+      "title": "Viva",
+      "kind": "Explain your changes",
+      "minutes": 10,
+      "xp": 150
+    }
+  ]
+}

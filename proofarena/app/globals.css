@@ -1,0 +1,191 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-jakarta);
+  --font-display: var(--font-bricolage);
+  --font-mono: var(--font-jetbrains);
+
+  --color-ink: #0f172a;
+  --color-paper: #f6f7fb;
+  --color-gold: #d99a0b;
+  --color-gold-soft: #fdf3dc;
+  --color-brand: #4338ca;
+  --color-brand-soft: #eef0ff;
+  --color-arena: #1a1033;
+  --color-arena-2: #2a1a52;
+}
+
+html,
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+}
+
+body {
+  font-family: var(--font-jakarta), system-ui, sans-serif;
+}
+
+.font-display {
+  font-family: var(--font-bricolage), system-ui, sans-serif;
+  letter-spacing: -0.02em;
+}
+
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Show code exactly as typed: no ligatures turning >= into ≥ */
+code,
+pre,
+.font-mono {
+  font-variant-ligatures: none;
+  font-feature-settings: 'liga' 0, 'calt' 0;
+}
+
+/* Subtle palace-arch pattern for hero areas */
+.arch-bg {
+  background-image: radial-gradient(circle at 50% 120%, rgba(217, 154, 11, 0.18) 0 30%, transparent 31%),
+    radial-gradient(circle at 20% 130%, rgba(67, 56, 202, 0.12) 0 25%, transparent 26%),
+    radial-gradient(circle at 80% 130%, rgba(67, 56, 202, 0.12) 0 25%, transparent 26%);
+}
+
+.arena-bg {
+  background: radial-gradient(1200px 500px at 50% -10%, #3b2380 0%, transparent 60%), linear-gradient(180deg, #1a1033 0%, #120a26 100%);
+}
+
+@keyframes pop-in {
+  0% {
+    transform: scale(0.85);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.04);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.pop-in {
+  animation: pop-in 0.45s ease-out both;
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(250, 204, 21, 0.55);
+  }
+  100% {
+    box-shadow: 0 0 0 14px rgba(250, 204, 21, 0);
+  }
+}
+.pulse-ring {
+  animation: pulse-ring 1.6s ease-out infinite;
+}
+
+@keyframes rise {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+.rise {
+  transform-origin: bottom;
+  animation: rise 0.9s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.fade-up {
+  animation: fade-up 0.5s ease-out both;
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+.float {
+  animation: float 3s ease-in-out infinite;
+}
+
+@keyframes shine {
+  from {
+    background-position: -200% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+.shine {
+  background-image: linear-gradient(110deg, transparent 30%, rgba(255, 255, 255, 0.45) 50%, transparent 70%);
+  background-size: 200% 100%;
+  animation: shine 2.6s linear infinite;
+}
+
+@keyframes glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(217, 154, 11, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 28px 4px rgba(217, 154, 11, 0.35);
+  }
+}
+.glow {
+  animation: glow 2.4s ease-in-out infinite;
+}
+
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.spin-slow {
+  animation: spin-slow 12s linear infinite;
+}
+
+.tilt {
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+.tilt:hover {
+  transform: translateY(-3px) rotate(-0.4deg);
+  box-shadow: 0 16px 40px -18px rgba(15, 23, 42, 0.35);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pop-in,
+  .pulse-ring,
+  .rise,
+  .fade-up,
+  .float,
+  .shine,
+  .glow,
+  .spin-slow {
+    animation: none;
+  }
+}
+
+:focus-visible {
+  outline: 2px solid #4338ca;
+  outline-offset: 2px;
+}

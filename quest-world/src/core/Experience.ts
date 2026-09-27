@@ -85,6 +85,8 @@ export class Experience {
   quickStart = false;
   /** Set while a full-screen overlay covers the world: skip updates and rendering entirely. */
   paused = false;
+  /** A mini-game that borrows the live world (scene, camera, terrain, grass, sky) while it runs; its update replaces the player's. */
+  minigame: { update(dt: number, time: number): void } | null = null;
   compiled: Promise<void> = Promise.resolve();
   /** Satellite-style top-down render of the real world, used by the minimap and the travel map. */
   mapImage: Promise<HTMLCanvasElement | null> = Promise.resolve(null);
@@ -233,7 +235,10 @@ export class Experience {
 
     // Player: Quaternius "Adventurer" (CC0) with the Toon Shooter AK attached to the right hand.
     const rifle = this.assets.gltf.rifle.scene.getObjectByName('AK')!;
-    this.character = new AnimatedCharacter(this.assets.gltf.student, { weapon: 'AK', height: 1.78, attach: { object: rifle, bone: 'Index1.R' } });
+    // A downloaded Mixamo character wins; otherwise the built-in Quaternius student. The rifle goes in the right hand
+    // and is only shown in battle mode.
+    const mixamo = this.assets.mixamo;
+    this.character = new AnimatedCharacter(mixamo ?? this.assets.gltf.student, { weapon: 'AK', height: 1.78, attach: { object: rifle, bone: mixamo ? 'mixamorigRightHand' : 'Index1.R' } });
     this.character.play('Idle');
     this.scene.add(this.character.root);
     this.player = new Player(this.terrain, this.colliders);
@@ -841,7 +846,8 @@ export class Experience {
     this.elapsed += dt;
 
     try {
-      if (this.started) this.updateGame(dt);
+      if (this.minigame) this.minigame.update(dt, this.elapsed);
+      else if (this.started) this.updateGame(dt);
       else if (!this.warming) this.introCamera(this.elapsed);
 
       this.updateWorld(this.elapsed, dt);

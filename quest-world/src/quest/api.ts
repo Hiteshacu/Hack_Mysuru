@@ -51,6 +51,8 @@ export interface QuestView {
   /** One per enemy outpost: which company and role it guards (names stay hidden until unlocked). */
   guards: { slot: number; company: string; color: string; role: string }[];
   unlocked: Profile[];
+  /** Snake Debug: the 9 apple labels; once solved, the lines of the buggy code that hold the bug. */
+  snake: { options: string[]; done: boolean; bugLines: number[] };
 }
 
 /** A hiring-team member unlocked by defeating an outpost in battle. */

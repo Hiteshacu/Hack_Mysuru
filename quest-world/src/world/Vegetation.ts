@@ -3,7 +3,7 @@ import type { Terrain } from './Terrain';
 import type { Colliders } from './Colliders';
 import type { Assets } from '../core/Assets';
 import { ModelScatter } from './ModelScatter';
-import { lakes, PLAY_RADIUS, SPAWN, VILLAGE, zones } from './layout';
+import { lakes, PLAY_RADIUS, SNAKE_MEADOW, SPAWN, VILLAGE, zones } from './layout';
 import { fbm, mulberry32, noise2D } from '../utils/math';
 import { preserveAlphaCoverage } from './foliageTexture';
 
@@ -85,6 +85,7 @@ export class Vegetation {
     for (const zn of zones) if (Math.hypot(x - zn.x, z - zn.z) < zn.flat + extra) return false;
     if (Math.hypot(x - SPAWN.x, z - SPAWN.z) < 9 + extra) return false;
     if (Math.hypot(x - VILLAGE.x, z - VILLAGE.z) < VILLAGE.r + extra) return false;
+    if (Math.hypot(x - SNAKE_MEADOW.x, z - SNAKE_MEADOW.z) < SNAKE_MEADOW.r + extra) return false;
     return true;
   }
 

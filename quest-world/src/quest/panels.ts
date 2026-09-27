@@ -73,8 +73,13 @@ export const panels: Record<string, { eyebrow: string; title: () => string; rend
       return `
       <p class="cs-kicker">🚨 Incoming bug report</p>
       <p class="lead">${esc(d.story)}</p>
-      <p class="muted">Sit at the laptop, find the bug in <code>${esc(d.functionName)}</code> and make all ${d.tests.length} tests pass.</p>
-      <button class="btn btn-primary btn-lg q-start" data-quest="debug">🐞 Open the laptop</button>`;
+      ${
+        quest.view?.snake?.done
+          ? `<p class="muted">You found the kind of bug. The snake is waiting in the console around the buggy lines: fix <code>${esc(d.functionName)}</code> and make every test pass.</p>
+      <button class="btn btn-primary btn-lg q-start" data-quest="debug">🐞 Open the laptop</button>`
+          : `<p class="muted"><b>Snake Debug</b> first: steer the snake to the apple that names the kind of bug (3 lives). The right apple leads the snake into the debug console, where it circles the buggy lines of <code>${esc(d.functionName)}</code>.</p>
+      <button class="btn btn-primary btn-lg q-start" data-quest="debug">🐍 Play Snake Debug</button>`
+      }`;
     },
   },
   projects: {
@@ -128,8 +133,22 @@ export const panels: Record<string, { eyebrow: string; title: () => string; rend
     title: () => 'Companies hiring',
     render: () => {
       const r = quest.view?.recruiters || [];
+      const unlocked = quest.view?.unlocked || [];
+      const guards = quest.view?.guards || [];
+      const initials = (n: string) => n.split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+      const people = guards
+        .map((g) => {
+          const p = unlocked.find((u) => u.company === g.company && u.role === g.role);
+          if (!p) return `<div class="q-person locked" style="--c:${esc(g.color)}"><span class="q-avatar">🔒</span><div><strong>Locked profile</strong><span>${esc(g.role)} · ${esc(g.company)}</span></div></div>`;
+          return `<div class="q-person" style="--c:${esc(p.color)}"><span class="q-avatar">${esc(initials(p.name))}</span><div><strong>${esc(p.name)}</strong><span>${esc(p.role)} · ${esc(p.company)}</span>${p.hiringFor.length ? `<em>Hiring for ${esc(p.hiringFor.join(', '))}</em>` : ''}</div>
+            <div class="q-person-links">${p.linkedin ? `<a class="btn btn-sm q-li" href="${esc(p.linkedin)}" target="_blank" rel="noopener noreferrer">in</a>` : ''}${p.email ? `<button class="btn btn-ghost btn-sm" data-copy="${esc(p.email)}" title="Copy email">✉</button>` : ''}</div></div>`;
+        })
+        .join('');
       return `<p class="lead">These companies hire through ProofArena. Finish the quest to reach their HRs in the Community Camp.</p>
-      <div class="q-jobs">${r.map((c) => `<div class="q-job" style="--c:${esc(c.color)}"><div><strong>${esc(c.name)}</strong><span class="muted">${c.openings.length ? esc(c.openings.join(' · ')) : 'No open roles yet'}</span></div></div>`).join('')}</div>`;
+      <div class="q-jobs">${r.map((c) => `<div class="q-job" style="--c:${esc(c.color)}"><div><strong>${esc(c.name)}</strong><span class="muted">${c.openings.length ? esc(c.openings.join(' · ')) : 'No open roles yet'}</span></div></div>`).join('')}</div>
+      <p class="cs-kicker">Hiring team · ${unlocked.length}/${guards.length} unlocked</p>
+      <p class="muted">Each enemy outpost guards one of these profiles. Win the rifle at the Arrow Range, press <kbd>B</kbd> for battle and defeat the outposts to unlock their LinkedIn and email.</p>
+      <div class="q-people">${people}</div>`;
     },
   },
 };

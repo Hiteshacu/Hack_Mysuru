@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { loadMixamo } from './Mixamo';
 
 /*
  * 3D models: CC0 packs by Quaternius (https://quaternius.com), downloaded from poly.pizza and
@@ -21,6 +22,8 @@ export type AssetKey = keyof typeof FILES;
 
 export class Assets {
   readonly gltf = {} as Record<AssetKey, GLTF>;
+  /** A Mixamo player from public/models/mixamo/, if one was downloaded (see core/Mixamo.ts). */
+  mixamo: GLTF | null = null;
   private templates = new Map<string, THREE.Object3D>();
 
   async load(onProgress: (p: number) => void) {
@@ -47,7 +50,8 @@ export class Assets {
           (err) => (attempt < 2 ? setTimeout(() => fetchModel(key, attempt + 1).then(resolve, reject), 400 * (attempt + 1)) : reject(err)),
         );
       });
-    await Promise.all(keys.map((key) => fetchModel(key)));
+    const [, mixamo] = await Promise.all([Promise.all(keys.map((key) => fetchModel(key))), loadMixamo(`${import.meta.env.BASE_URL}models/mixamo/`).catch(() => null)]);
+    this.mixamo = mixamo;
     for (const key of ['nature', 'village'] as const) {
       this.gltf[key].scene.updateMatrixWorld(true);
       for (const child of this.gltf[key].scene.children) this.templates.set(child.name, child);

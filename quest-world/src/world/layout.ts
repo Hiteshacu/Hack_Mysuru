@@ -96,6 +96,9 @@ export const SPAWN = { x: 0, z: 66, facing: Math.PI };
 /** A small medieval village west of the cabin (decorative, with houses you can walk between). */
 export const VILLAGE = { x: -78, z: -12, r: 20 };
 
+/** Snake Meadow: an open, flattened clearing (no trees) where the Snake Debug game is played inside the real world. */
+export const SNAKE_MEADOW = { x: -22, z: 47, r: 12 };
+
 /** Village buildings: model name, local position, rotation (radians), scale. */
 export const villageBuildings: { model: string; x: number; z: number; rot: number; scale: number }[] = [
   { model: 'Inn', x: -80, z: 2, rot: Math.PI * 0.5, scale: 2.6 },
@@ -137,6 +140,7 @@ export const healthPickups: [number, number][] = [
 /** Extra flattened areas (village, outposts) for the terrain generator. */
 export const extraFlats: { x: number; z: number; r: number }[] = [
   { x: VILLAGE.x, z: VILLAGE.z, r: VILLAGE.r },
+  { x: SNAKE_MEADOW.x, z: SNAKE_MEADOW.z, r: SNAKE_MEADOW.r },
   ...enemySpawns.map((e) => ({ x: e.x, z: e.z, r: 5 })),
 ];
 

@@ -9,6 +9,7 @@ import { esc, play, quest, refreshQuest, stage, type Profile } from '../quest/ap
 import { McqGate } from '../quest/McqGate';
 import { ArrowGame } from '../quest/ArrowGame';
 import { CodeStage } from '../quest/CodeStage';
+import { SnakeGame } from '../quest/SnakeGame';
 import { objective, panels, trackerHTML } from '../quest/panels';
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string, root: ParentNode = document) => root.querySelector(sel) as T;
@@ -475,22 +476,45 @@ export class UI {
           this.holdWorld(false);
           if (earned) this.stageCleared('arrow');
         },
+        this.exp?.assets,
       );
       this.overlay = game;
       return;
     }
-    if (kind === 'debug' || kind === 'dsa') {
+    const openCode = (bugLines: number[] = []) => {
       this.overlay = new CodeStage(
         host,
-        kind,
+        kind as 'debug' | 'dsa',
         q,
         () => {
           this.holdWorld(false);
-          this.stageCleared(kind);
+          this.stageCleared(kind as 'debug' | 'dsa');
         },
         () => this.holdWorld(false),
+        bugLines,
       );
+    };
+    if (kind === 'debug' && !quest.view.snake?.done) {
+      // Debug Den opens with Snake Debug: eat the apple that names the bug, then the snake leads into the console.
+      // Snake Debug runs inside the live world (Snake Meadow), so the world keeps rendering; the HUD stays hidden.
+      this.exp.paused = false;
+      this.overlay = new SnakeGame(
+        host,
+        q,
+        quest.view.snake?.options ?? [],
+        (bugLines) => {
+          this.exp.paused = true;
+          refreshQuest().catch(() => null);
+          this.toast('🐍 Into the debug console', 'The snake is circling the lines that hold the bug. Fix them and make every test pass.', '#5fd68a', 6000);
+          openCode(bugLines);
+        },
+        () => this.holdWorld(false),
+        this.exp,
+      );
+      return;
     }
+    if (kind === 'debug') openCode(quest.view.snake?.bugLines ?? []);
+    else if (kind === 'dsa') openCode();
   }
 
   /** Pauses the 3D world while a stage is open, and resumes it afterwards. */
@@ -665,7 +689,13 @@ export class UI {
     this.syncBattle();
     this.flashHelp(3000);
     if (on) {
-      this.toast('Battle started', isTouch ? 'Use the red fire button and the grenade button. Stations are safe zones.' : 'Click the world to aim · LMB shoot · hold RMB to use the scope · G grenade · Esc frees the mouse.', '#ff7a5c', 5000);
+      const n = quest.view?.guards.length ?? 0;
+      this.toast(
+        'Battle started',
+        `${n ? `Each outpost guards a recruiter's profile: defeat it to unlock their LinkedIn and email (${quest.view?.unlocked.length ?? 0}/${n}). ` : ''}${isTouch ? 'Use the red fire button and the grenade button.' : 'Click to aim · LMB shoot · RMB scope · G grenade · Esc frees the mouse.'}`,
+        '#ff7a5c',
+        6500,
+      );
     } else {
       this.toast('Game stopped', 'Enemies are gone. Back to the quest.', '#7fd6c2', 3000);
       this.root.classList.remove('ghost');

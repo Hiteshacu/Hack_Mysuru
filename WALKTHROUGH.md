@@ -357,26 +357,52 @@ retry can't just copy them. Every retry lowers the points, and the company sees 
 **light beacon** stands over it. The **quest tracker** is on the left. Walk with **WASD** (Shift = sprint) or use the
 top bar to fast travel. At a glowing ring press **E**.
 
-**Stage 2 · Arrow Range** (east). **Step up to the range**. Each round shows a question; the three answers are painted
-on targets.
+**Stage 2 · Arrow Range** (east). **Step up to the range**. A 3D archery range opens at sunset: you hold a bow
+(first person), three 3D targets carry the answer signs, the Mysuru Palace sits on the hill, and a windsock, flags and
+drifting pollen show the wind. Each round shows a question; the three answers are painted on the targets' signs.
 - **The `+` is where the arrow lands.** Move the mouse (or arrow keys) to put the `+` on the right answer. The target
   lights up and the bar says *"Aiming at GET"*.
 - **Hold** click (or Space) to draw the bow. The `+` steadies and the bar turns green: **"Steady! Release now"**.
-- **Release** while it's green. The arrow flies in an arc (over the other targets) and sticks exactly where the `+` was.
+- **Release** while it's green. The **arrow cam** follows the arrow down the range, slows down just before impact, and
+  shows it sticking into the target exactly where the `+` was. Then the camera returns to the shooting line.
+- From round 4 the targets drift, but the `+` still decides: the arrow lands where you aimed on that target.
 - Hold too long and the arm shakes (red bar, the `+` wobbles). Release too early and it drops short.
   Wind pushes the `+` sideways, so keep it on the board.
 - Centre = **BULLSEYE +10**, middle ring +7, edge +5. 2 arrows per round.
 3 of 5 correct targets → **Collect your rifle** → the **Start battle** button (and the **B** key) unlocks.
 If you fail, only the score is shown (answers stay hidden), then **Try the range again**.
 
-**Stage 3 · Debug Den** (the cabin, west). **Open the laptop**. A VS Code editor shows buggy code, the bug report and
-3 visible tests. There are also **3 hidden tests**, so hard-coding the visible answers fails.
-Demo moves:
-1. Press **Run tests & submit fix** without changing anything → red, some tests fail (e.g. 3/6).
-2. Fix the bug (the hint helps). `console.log` works; its output appears in the **Console** box.
-3. Submit → **All 6 tests pass!** → back in the world with a toast and confetti.
+**Stage 3a · Snake Debug** (the cabin, west → **🐍 Play Snake Debug**). The camera flies to **Snake Meadow**, a clearing
+in the real valley (same grass, trees, sky and light as the world). Nine apples sit on tree stumps, each naming a kind of bug (Off-by-one, Edge case, Wrong operator, Wrong variable, Normalize input,
+Wrong formula, Missing return, Infinite loop, Null / undefined). The bug report and the buggy code are on the left.
+**Point with the cursor**: the snake slithers to where you point and waits there (a gold ring marks the spot). Go around
+the other apples and touch the one that names the bug. **W/A/S/D** or the arrow keys also move it.
+- Wrong apple: it rots, the snake flashes red and loses a life (❤❤❤). Three wrong apples and the snake is out → **Play
+  again** (apples reshuffled).
+- Right apple: "Correct!", the camera spirals down onto the snake and it slithers **into the debug console**.
+- Answer for the demo quest (`applyDiscount`): **Edge case** (the fix clamps the percent with `Math.min`/`Math.max`).
+  The server checks the answer; the right apple also tells the console which lines hold the bug.
 
-**Stage 4 · Algorithm Grove** (south). **Enter the grove**.
+**Stage 3b · Debug Den = "Bug Hunt"** (the console, laid out like LeetCode / VS Code: Description and Hints on the
+left, the editor with font size, Copy and Reset on the right, and a resizable bottom panel with **Testcase**, **Test Result**
+(Accepted / Wrong Answer / Runtime Error / Time Limit Exceeded, passed count, runtime, output vs expected, 🔒 hidden
+cases) and **Console**. **Ctrl+Enter** runs, **Ctrl+Shift+Enter** submits). In the VS Code editor, an animated **snake circles the buggy
+line(s)** with a tag like "🐍 The bug is hiding in line 3" (the reward for the right apple). At the top, production is on fire: a red
+siren, "Incident: users are affected" and a **server health** bar that slowly drains while the bug is live. Every test is
+a **bug crawling on the screen** (the dark ones with `?` are the 3 hidden tests). Below: the bug report, 3 visible tests
+and a VS Code editor. Hard-coding the visible answers fails the hidden ones.
+Demo moves:
+1. Press **Run tests & submit fix** without changing anything → bugs that pass get **squashed** (💥 "squash!"), failing
+   ones **bite** (health drops). The result box shows e.g. 3/6.
+2. Fix the bug (the hint helps). `console.log` works; its output appears in the **Console** box.
+3. Submit → every bug is squashed in a row (**COMBO ×6!**) → **BUG SQUASHED ★★★** and "Production restored" → back in
+   the world. Stars: ★★★ first try and under 4 minutes, ★★ within 2 tries and 10 minutes, otherwise ★.
+
+**Stage 4 · Algorithm Grove = "Boss battle"** (south). **Enter the grove**. The **Algorithm Guardian** 🐉 has one HP
+segment per test (red for examples, purple for hidden) and you have **3 hearts**.
+- **Run examples** is scouting: hits flash on the example segments, then reset.
+- **Submit** is the real attack: every passing test breaks a segment with a damage number, failing tests are "blocked"
+  and a failed submit costs a heart. Breaking all segments → **GUARDIAN DEFEATED** with a star rating.
 - **Run examples** checks the 2 visible examples. **Submit solution** also runs the hidden tests (4–5).
 - **Custom input**: type your own arguments as a JSON array (e.g. `["pwwkew"]`) → **Run my input**. You see your output
   and the **expected** output, computed by the company's reference solution on the server (the reference never reaches
@@ -392,6 +418,14 @@ throwaway container (Docker) per run.
 
 **Finale · Community Camp** (by the lake). Every role with **Apply** links and HR emails (click an email to copy it).
 The quest's own role comes first. The same list is on the student **Community** page.
+
+**Bonus · Battle mode unlocks recruiter profiles.** After winning the rifle, press **B** (or **Start battle**). Each of the
+7 enemy outposts guards one hiring-team profile (the company's HR plus the "Hiring team" from the company profile).
+Defeat an outpost → a **"Profile unlocked"** card slides in with name, role, company, what they hire for, email and a
+**LinkedIn** button. The 📇 counter in the top bar shows progress (e.g. 2/6), and **Recruiter Ridge** lists every profile
+(locked ones only show company and role). Unlocks are checked on the server and need the rifle.
+To show real LinkedIn buttons, add links in **Company onboarding → HR LinkedIn / Hiring team** (format per line:
+`Name · Role · https://www.linkedin.com/in/...`). The demo people are fictional, so they have no LinkedIn link.
 
 Say: *"The quiz filters, the arrow range makes it fun, but the rifle, the community and the HR emails are only
 unlocked by code that passes tests on our server. Answers never reach the browser."*

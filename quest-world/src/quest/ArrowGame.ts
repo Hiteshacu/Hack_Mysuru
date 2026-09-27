@@ -1,15 +1,20 @@
-// Arrow Range: a skill-based archery game. Each round asks a question and paints the three answers
-// on targets; the player shoots the right one.
+// Arrow Range, in 3D. Each round asks a question and paints the three answers on archery targets down a
+// sunset range; the player shoots the right one.
 //
-// Aiming is "what you see is where it lands": the + reticle is the landing point, and the launch velocity is
-// solved so the arc passes exactly through it (choosing a lob that clears the other targets).
-// The skill is in steadiness and timing, like real archery:
+// Aiming is "what you see is where it lands": the + reticle is the landing point. A ray from the camera through
+// the + finds the spot on a target (or the ground), and the launch velocity is solved so the 3D arrow passes
+// exactly through it. The skill is steadiness and timing, like real archery:
 //   - hold to draw: the reticle sway shrinks as the bow reaches full draw,
 //   - hold too long at full draw and the arm tires, so the sway grows again,
 //   - release under-drawn and the arrow drops short,
 //   - wind pushes the reticle sideways; keep the + on the board to compensate.
+// After release the camera follows the arrow, slows down near the target and shows the impact
+// (the "arrow cam" used by archery games), then returns to the shooting line.
 // Controls: mouse / touch / arrow keys move the reticle; hold click or Space to draw; release to shoot.
 
+import * as THREE from 'three';
+import { Sky } from 'three/addons/objects/Sky.js';
+import type { Assets } from '../core/Assets';
 import { esc } from './api';
 
 export interface ArrowRound {
@@ -24,67 +29,61 @@ export interface ArrowResult {
 }
 
 interface Target {
-  x: number;
-  baseY: number;
-  y: number;
-  r: number;
   label: string;
   index: number;
-  bob: number;
-  hitFlash: number;
+  group: THREE.Group;
+  face: THREE.Mesh;
+  glow: THREE.Mesh;
+  sign: THREE.Mesh;
+  base: THREE.Vector3;
+  r: number;
   hover: number;
+  wobble: number;
+  phase: number;
 }
 
 interface Arrow {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  angle: number;
-  trail: { x: number; y: number }[];
+  mesh: THREE.Group;
+  start: THREE.Vector3;
+  vel: THREE.Vector3;
+  t: number;
+  /** Planned arrival time at the aimed point. */
+  T: number;
   flying: boolean;
-  /** The landing point the shot was solved for. */
-  aimX: number;
-  aimY: number;
   goal?: Target;
-  stuckTo?: Target;
-  offX?: number;
-  offY?: number;
-}
-
-interface Particle {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  life: number;
-  max: number;
-  color: string;
-  size: number;
+  /** Hit point in the goal target's local space (so moving targets are still hit where aimed). */
+  local?: THREE.Vector3;
+  trail: THREE.Line;
+  trailPts: THREE.Vector3[];
 }
 
 interface Popup {
-  x: number;
-  y: number;
+  pos: THREE.Vector3;
   text: string;
   color: string;
   life: number;
+  big: boolean;
 }
 
-interface Shot {
-  vx: number;
-  vy: number;
-  time: number;
-  /** The target the shot was aimed at (an aimed arrow can only stick in that target). */
-  goal?: Target;
+interface Spark {
+  p: THREE.Vector3;
+  v: THREE.Vector3;
+  life: number;
 }
 
 const COLORS = ['#f2b35c', '#7fd6c2', '#e39bd0'];
 const ARROWS_PER_ROUND = 2;
-/** Seconds of full draw before the arm starts to shake. */
 const STEADY_TIME = 1.6;
-/** Below this draw the arrow drops short. */
 const FULL_DRAW = 0.85;
+const G = new THREE.Vector3(0, -9.81, 0);
+const HOME = new THREE.Vector3(0, 1.65, 7);
+const LOOK = new THREE.Vector3(0, 1.9, -24);
+/** Where the targets stand: x, z and face height. Rotated each round so the answer order changes. */
+const SLOTS: [number, number, number][] = [
+  [-4.3, -13, 1.45],
+  [0.3, -18.5, 1.8],
+  [4.7, -15, 1.55],
+];
 
 class Sfx {
   ctx: AudioContext | null = null;
@@ -130,6 +129,21 @@ class Sfx {
     const ng = c.createGain();
     this.env(ng, t, 0.01, 0.18, 0.32);
     n.connect(f).connect(ng).connect(c.destination);
+    n.start(t);
+  }
+  whoosh() {
+    const c = this.ctx;
+    if (!c) return;
+    const t = c.currentTime;
+    const n = this.noise(0.6);
+    const f = c.createBiquadFilter();
+    f.type = 'bandpass';
+    f.Q.value = 2;
+    f.frequency.setValueAtTime(900, t);
+    f.frequency.exponentialRampToValueAtTime(300, t + 0.6);
+    const g = c.createGain();
+    this.env(g, t, 0.05, 0.12, 0.5);
+    n.connect(f).connect(g).connect(c.destination);
     n.start(t);
   }
   thunk(big = false) {
@@ -178,22 +192,35 @@ class Sfx {
   }
 }
 
+const rnd = (() => {
+  let s = 12345;
+  return () => ((s = (s * 16807) % 2147483647) / 2147483647);
+})();
+
+function canvasTexture(w: number, h: number, draw: (g: CanvasRenderingContext2D) => void) {
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  draw(c.getContext('2d')!);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+
 export class ArrowGame {
   private root: HTMLDivElement;
-  private canvas: HTMLCanvasElement;
-  private g: CanvasRenderingContext2D;
-  private bg: HTMLCanvasElement | null = null;
+  private overlay: HTMLCanvasElement;
+  private o: CanvasRenderingContext2D;
+  private renderer: THREE.WebGLRenderer;
+  private scene = new THREE.Scene();
+  private camera = new THREE.PerspectiveCamera(48, 1, 0.05, 1200);
   private W = 0;
   private H = 0;
   private dpr = 1;
-  private groundY = 0;
-  private bow = { x: 0, y: 0 };
-  /** Where the player is pointing (mouse / finger / keys). */
   private aim = { x: 0, y: 0 };
-  /** Where the arrow will land right now: aim + sway + wind. This is the + drawn on screen. */
   private reticle = { x: 0, y: 0 };
   private touchLift = 0;
-  private angle = -0.55;
   private power = 0;
   private fullTime = 0;
   private drawing = false;
@@ -201,33 +228,51 @@ export class ArrowGame {
   private arrowsLeft = ARROWS_PER_ROUND;
   private arrows: Arrow[] = [];
   private targets: Target[] = [];
-  private particles: Particle[] = [];
   private popups: Popup[] = [];
+  private sparks: Spark[] = [];
+  private sparkPoints: THREE.Points;
   private wind = 0;
   private picks: number[] = [];
   private ringScores: number[] = [];
   private shots = 0;
   private shake = 0;
-  private slowmo = 1;
+  private timeScale = 1;
   private time = 0;
   private last = 0;
   private raf = 0;
   private locked = false;
-  private clouds: { x: number; y: number; s: number; v: number }[] = [];
-  private fireflies: { x: number; y: number; p: number }[] = [];
   private sfx = new Sfx();
   private keys = new Set<string>();
+  private ray = new THREE.Raycaster();
+  private bow!: THREE.Group;
+  private bowString!: THREE.Line;
+  private nocked!: THREE.Group;
+  private windsock!: THREE.Group;
+  private flags: { mesh: THREE.Mesh; base: Float32Array; phase: number }[] = [];
+  private pollen!: THREE.Points;
+  private birds: { g: THREE.Group; speed: number; phase: number; y: number; z: number }[] = [];
+  private cam: 'aim' | 'follow' | 'impact' | 'return' = 'aim';
+  private camTimer = 0;
+  private followed: Arrow | null = null;
+  private camPos = HOME.clone();
+  private camLook = LOOK.clone();
+  private sunDir = new THREE.Vector3();
+  /** World position of the last impact, for the impact camera. */
+  private impactAt = new THREE.Vector3();
+  private disposables: { dispose(): void }[] = [];
 
   constructor(
     host: HTMLElement,
     private rounds: ArrowRound[],
     private onFinish: (r: ArrowResult) => void,
     private onExit: () => void,
+    private assets?: Assets,
   ) {
     this.root = document.createElement('div');
-    this.root.className = 'arrow-game';
+    this.root.className = 'arrow-game three';
     this.root.innerHTML = `
-      <canvas></canvas>
+      <canvas class="ag-gl"></canvas>
+      <canvas class="ag-overlay"></canvas>
       <div class="ag-top">
         <div class="ag-round"><span class="ag-kicker">Round <b class="ag-rn">1</b>/${rounds.length}</span><span class="ag-prompt"></span></div>
         <button class="ag-exit" aria-label="Leave the range">✕</button>
@@ -243,52 +288,492 @@ export class ArrowGame {
       </div>
       <div class="ag-banner" hidden></div>`;
     host.appendChild(this.root);
-    this.canvas = this.root.querySelector('canvas')!;
-    this.g = this.canvas.getContext('2d')!;
+    const gl = this.root.querySelector<HTMLCanvasElement>('.ag-gl')!;
+    this.overlay = this.root.querySelector<HTMLCanvasElement>('.ag-overlay')!;
+    this.o = this.overlay.getContext('2d')!;
+    this.renderer = new THREE.WebGLRenderer({ canvas: gl, antialias: true, powerPreference: 'high-performance' });
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 0.9;
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.root.querySelector('.ag-exit')!.addEventListener('click', () => this.close(true));
+
+    this.buildWorld();
+    this.buildBow();
+    const sparkGeo = new THREE.BufferGeometry();
+    sparkGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(300 * 3), 3));
+    this.sparkPoints = new THREE.Points(sparkGeo, new THREE.PointsMaterial({ color: '#ffe0a0', size: 0.07, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    this.sparkPoints.frustumCulled = false;
+    this.scene.add(this.sparkPoints);
+
     this.bind();
     this.resize();
-    this.aim = { x: this.W * 0.6, y: this.groundY - this.H * 0.25 };
+    this.aim = { x: this.W * 0.55, y: this.H * 0.5 };
     this.reticle = { ...this.aim };
-    for (let i = 0; i < 6; i++) this.clouds.push({ x: Math.random() * this.W, y: 40 + Math.random() * this.H * 0.3, s: 0.6 + Math.random() * 0.9, v: 6 + Math.random() * 14 });
-    for (let i = 0; i < 28; i++) this.fireflies.push({ x: Math.random() * this.W, y: this.groundY - Math.random() * this.H * 0.35, p: Math.random() * 6 });
     this.startRound(0);
     if (import.meta.env.DEV) (window as unknown as { __ag: ArrowGame }).__ag = this;
     this.last = performance.now();
     this.raf = requestAnimationFrame(this.loop);
   }
 
-  // ---------------------------------------------------------------- setup
+  // ---------------------------------------------------------------- world
+
+  private buildWorld() {
+    const s = this.scene;
+    // Golden-hour sky and matching fog
+    const sky = new Sky();
+    sky.scale.setScalar(1000);
+    const u = sky.material.uniforms;
+    u.turbidity.value = 7;
+    u.rayleigh.value = 2.2;
+    u.mieCoefficient.value = 0.006;
+    u.mieDirectionalG.value = 0.86;
+    this.sunDir.setFromSphericalCoords(1, THREE.MathUtils.degToRad(84), THREE.MathUtils.degToRad(160));
+    u.sunPosition.value.copy(this.sunDir);
+    s.add(sky);
+    s.fog = new THREE.Fog('#d9a27a', 70, 330);
+
+    s.add(new THREE.HemisphereLight('#ffe2c0', '#3b4a2c', 1.05));
+    const sun = new THREE.DirectionalLight('#ffd3a0', 2.4);
+    sun.position.copy(this.sunDir).multiplyScalar(80);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    const sc = sun.shadow.camera;
+    sc.left = -30;
+    sc.right = 30;
+    sc.top = 30;
+    sc.bottom = -40;
+    sc.far = 200;
+    sun.shadow.bias = -0.0005;
+    s.add(sun);
+
+    // Mowed lawn with range lanes
+    const lawn = canvasTexture(512, 512, (g) => {
+      g.fillStyle = '#5b8a3c';
+      g.fillRect(0, 0, 512, 512);
+      for (let i = 0; i < 8; i++) {
+        g.fillStyle = i % 2 ? 'rgba(255,255,220,0.06)' : 'rgba(0,30,0,0.08)';
+        g.fillRect(i * 64, 0, 64, 512);
+      }
+      for (let i = 0; i < 9000; i++) {
+        g.fillStyle = `rgba(${40 + rnd() * 60},${90 + rnd() * 80},${30 + rnd() * 30},0.35)`;
+        g.fillRect(rnd() * 512, rnd() * 512, 1.5, 3);
+      }
+    });
+    lawn.wrapS = lawn.wrapT = THREE.RepeatWrapping;
+    lawn.repeat.set(40, 40);
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(800, 800).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: lawn, roughness: 1 }));
+    ground.receiveShadow = true;
+    s.add(ground);
+    this.track(ground);
+
+    // Shooting line, lane markers and distance boards
+    const white = new THREE.MeshStandardMaterial({ color: '#f3efe2', roughness: 0.9 });
+    const line = new THREE.Mesh(new THREE.BoxGeometry(18, 0.02, 0.18), white);
+    line.position.set(0, 0.01, 4.4);
+    s.add(line);
+    for (const x of [-9, -3, 3, 9]) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.02, 40), new THREE.MeshStandardMaterial({ color: '#e8e2cc', roughness: 1, transparent: true, opacity: 0.45 }));
+      m.position.set(x, 0.012, -14);
+      s.add(m);
+    }
+    const wood = new THREE.MeshStandardMaterial({ color: '#7a5234', roughness: 0.9 });
+    const darkWood = new THREE.MeshStandardMaterial({ color: '#4d321f', roughness: 0.9 });
+    // Side fences
+    for (const side of [-1, 1]) {
+      for (let z = 6; z > -44; z -= 3.2) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.1, 0.14), darkWood);
+        post.position.set(side * 12, 0.55, z);
+        post.castShadow = true;
+        s.add(post);
+      }
+      for (const y of [0.45, 0.9]) {
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.1, 50), wood);
+        rail.position.set(side * 12, y, -19);
+        rail.castShadow = true;
+        s.add(rail);
+      }
+    }
+    // Straw bales behind the targets
+    const straw = new THREE.MeshStandardMaterial({ color: '#c9a45c', roughness: 1 });
+    for (let i = 0; i < 9; i++) {
+      const b = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.8, 0.9), straw);
+      b.position.set(-8 + i * 2 + (i % 2) * 0.2, 0.4 + (i % 3 === 0 ? 0.8 : 0), -24 - (i % 2) * 0.3);
+      b.rotation.y = (rnd() - 0.5) * 0.2;
+      b.castShadow = b.receiveShadow = true;
+      s.add(b);
+    }
+
+    // Trees from the quest world (same models as the valley), or simple cones as a fallback
+    const treeNames = ['Tree_1', 'Tree_2', 'Tree_3', 'Tree_4', 'Tree_5', 'MapleTree_1', 'MapleTree_2', 'BirchTree_1', 'BirchTree_2'];
+    const place = (x: number, z: number, scale: number) => {
+      const name = treeNames[Math.floor(rnd() * treeNames.length)];
+      let obj: THREE.Object3D;
+      try {
+        if (!this.assets) throw new Error('no assets');
+        obj = this.assets.instance(name);
+        obj.traverse((o) => {
+          const m = o as THREE.Mesh;
+          if (!m.isMesh) return;
+          const mats = (Array.isArray(m.material) ? m.material : [m.material]).map((src) => {
+            const c = (src as THREE.MeshStandardMaterial).clone();
+            if (/Leaves|Flowers/.test(src.name) || c.map) {
+              c.side = THREE.DoubleSide;
+              c.alphaTest = Math.max(c.alphaTest, 0.42);
+              c.transparent = false;
+            }
+            c.roughness = 1;
+            c.metalness = 0;
+            return c;
+          });
+          m.material = Array.isArray(m.material) ? mats : mats[0];
+        });
+      } catch {
+        obj = new THREE.Group();
+        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.22, 1.6, 6), darkWood);
+        trunk.position.y = 0.8;
+        const crown = new THREE.Mesh(new THREE.ConeGeometry(1.4, 3.4, 7), new THREE.MeshStandardMaterial({ color: '#3f6b35', flatShading: true }));
+        crown.position.y = 3;
+        obj.add(trunk, crown);
+        obj.traverse((o) => ((o as THREE.Mesh).castShadow = true));
+      }
+      obj.position.set(x, 0, z);
+      obj.rotation.y = rnd() * Math.PI * 2;
+      obj.scale.setScalar(scale);
+      s.add(obj);
+    };
+    for (let i = 0; i < 26; i++) {
+      const side = i % 2 ? 1 : -1;
+      place(side * (15 + rnd() * 16), 10 - rnd() * 75, 1 + rnd() * 0.7);
+    }
+    for (let i = 0; i < 14; i++) place(-40 + i * 6 + rnd() * 3, -48 - rnd() * 14, 1.1 + rnd() * 0.8);
+
+    // Distant hills and the Mysuru Palace on Chamundi hill
+    const hillMat = (c: string) => new THREE.MeshStandardMaterial({ color: c, roughness: 1, flatShading: true });
+    const hills: [number, number, number, number, number, string][] = [
+      [-120, -230, 90, 34, 60, '#5c6b3f'],
+      [60, -260, 120, 46, 70, '#55623b'],
+      [190, -210, 80, 30, 55, '#627246'],
+      [-230, -170, 90, 26, 60, '#657448'],
+      [0, -330, 180, 70, 90, '#6d6f50'],
+    ];
+    for (const [x, z, r, h, d, c] of hills) {
+      const m = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 2), hillMat(c));
+      m.scale.set(r, h, d);
+      m.position.set(x, -2, z);
+      s.add(m);
+    }
+    this.buildPalace(new THREE.Vector3(18, 0, -190));
+
+    // Windsock showing the wind
+    this.windsock = new THREE.Group();
+    this.windsock.position.set(-8.5, 0, -12);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 5, 8), new THREE.MeshStandardMaterial({ color: '#d8d8d8', metalness: 0.5, roughness: 0.4 }));
+    pole.position.y = 2.5;
+    pole.castShadow = true;
+    this.windsock.add(pole);
+    const sockTex = canvasTexture(256, 64, (g) => {
+      for (let i = 0; i < 5; i++) {
+        g.fillStyle = i % 2 ? '#ffffff' : '#ff6b3d';
+        g.fillRect(i * 51.2, 0, 51.2, 64);
+      }
+    });
+    const sock = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.28, 0.14, 1.6, 16, 1, true).rotateZ(Math.PI / 2).translate(0.8, 0, 0),
+      new THREE.MeshStandardMaterial({ map: sockTex, side: THREE.DoubleSide, roughness: 0.8 }),
+    );
+    sock.name = 'sock';
+    sock.position.y = 4.85;
+    sock.castShadow = true;
+    this.windsock.add(sock);
+    s.add(this.windsock);
+
+    // ProofArena banners on the shooting line
+    const flagColors = ['#4338ca', '#f2b35c', '#7fd6c2'];
+    [-8, 8, 0].forEach((x, i) => {
+      const z = i === 2 ? -36 : 4.8;
+      const p = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 3.6, 8), darkWood);
+      p.position.set(x, 1.8, z);
+      p.castShadow = true;
+      s.add(p);
+      const geo = new THREE.PlaneGeometry(1.4, 0.8, 12, 6).translate(0.7, 0, 0);
+      const flag = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: flagColors[i], side: THREE.DoubleSide, roughness: 0.8 }));
+      flag.position.set(x, 3.2, z);
+      flag.castShadow = true;
+      s.add(flag);
+      this.flags.push({ mesh: flag, base: (geo.attributes.position.array as Float32Array).slice(), phase: i * 1.7 });
+    });
+
+    // Pollen and fireflies drifting with the wind
+    const n = 420;
+    const pos = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      pos[i * 3] = (rnd() - 0.5) * 60;
+      pos[i * 3 + 1] = 0.3 + rnd() * 7;
+      pos[i * 3 + 2] = 8 - rnd() * 60;
+    }
+    const pg = new THREE.BufferGeometry();
+    pg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    this.pollen = new THREE.Points(pg, new THREE.PointsMaterial({ color: '#fff1b8', size: 0.06, transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending }));
+    s.add(this.pollen);
+
+    // A few birds gliding over the range
+    const birdMat = new THREE.LineBasicMaterial({ color: '#2b1d24' });
+    for (let i = 0; i < 6; i++) {
+      const g = new THREE.Group();
+      const wing = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-0.6, 0.15, 0), new THREE.Vector3(0, 0, 0), new THREE.Vector3(0.6, 0.15, 0)]);
+      g.add(new THREE.Line(wing, birdMat));
+      const y = 22 + rnd() * 14;
+      const z = -60 - rnd() * 60;
+      g.position.set(-80 + rnd() * 160, y, z);
+      g.scale.setScalar(2 + rnd());
+      s.add(g);
+      this.birds.push({ g, speed: 3 + rnd() * 3, phase: rnd() * 6, y, z });
+    }
+  }
+
+  private buildPalace(at: THREE.Vector3) {
+    const g = new THREE.Group();
+    g.position.copy(at);
+    const stone = new THREE.MeshStandardMaterial({ color: '#d9c7a8', roughness: 0.9 });
+    const dome = new THREE.MeshStandardMaterial({ color: '#c98d4a', roughness: 0.6, metalness: 0.2 });
+    const lit = new THREE.MeshBasicMaterial({ color: '#ffd27a' });
+    const hill = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 2), new THREE.MeshStandardMaterial({ color: '#56643a', flatShading: true, roughness: 1 }));
+    hill.scale.set(70, 22, 40);
+    hill.position.y = -8;
+    g.add(hill);
+    const base = new THREE.Group();
+    base.position.y = 12;
+    g.add(base);
+    const box = (w: number, h: number, d: number, x: number, y: number, z = 0) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), stone);
+      m.position.set(x, y + h / 2, z);
+      base.add(m);
+      return m;
+    };
+    box(44, 8, 10, 0, 0);
+    box(14, 8, 10, 0, 8);
+    const addDome = (x: number, y: number, r: number) => {
+      const d = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), dome);
+      d.position.set(x, y, 0);
+      base.add(d);
+      const spire = new THREE.Mesh(new THREE.ConeGeometry(r * 0.12, r * 0.9, 8), dome);
+      spire.position.set(x, y + r + r * 0.4, 0);
+      base.add(spire);
+    };
+    addDome(0, 16, 6);
+    for (const x of [-19, 19]) {
+      box(5, 14, 5, x, 0);
+      addDome(x, 14, 2.8);
+    }
+    for (let i = -8; i <= 8; i++) {
+      const w = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 1.6), lit);
+      w.position.set(i * 2.4, 3.2, 5.05);
+      base.add(w);
+    }
+    this.scene.add(g);
+  }
+
+  private buildBow() {
+    this.bow = new THREE.Group();
+    // Recurve bow held at the lower right; the string is at z=0 and the limbs curve forward to the grip.
+    this.bow.position.set(0.17, -0.19, -0.55);
+    this.bow.rotation.set(0.02, 0.1, -0.22);
+    this.bow.scale.setScalar(0.5);
+    const limbMat = new THREE.MeshStandardMaterial({ color: '#7a4526', roughness: 0.45, metalness: 0.05 });
+    const curve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(0, 0.52, 0.02),
+      new THREE.Vector3(0, 0.44, -0.07),
+      new THREE.Vector3(0, 0.26, -0.14),
+      new THREE.Vector3(0, 0, -0.17),
+      new THREE.Vector3(0, -0.26, -0.14),
+      new THREE.Vector3(0, -0.44, -0.07),
+      new THREE.Vector3(0, -0.52, 0.02),
+    ]);
+    this.bow.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 48, 0.014, 8), limbMat));
+    const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.14, 10), new THREE.MeshStandardMaterial({ color: '#2b1a10', roughness: 0.9 }));
+    grip.position.set(0, 0, -0.17);
+    this.bow.add(grip);
+    const stringGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0.52, 0.02), new THREE.Vector3(0, 0, 0.02), new THREE.Vector3(0, -0.52, 0.02)]);
+    this.bowString = new THREE.Line(stringGeo, new THREE.LineBasicMaterial({ color: '#f5efe0' }));
+    this.bow.add(this.bowString);
+    this.nocked = this.arrowMesh();
+    this.nocked.position.set(0, 0, 0.02);
+    this.bow.add(this.nocked);
+    this.camera.add(this.bow);
+    this.scene.add(this.camera);
+    const hand = new THREE.PointLight('#ffd8a8', 0.6, 3);
+    hand.position.set(0.3, 0.2, 0);
+    this.camera.add(hand);
+  }
+
+  /** An arrow pointing down -z with its nock at the origin. */
+  private arrowMesh() {
+    const g = new THREE.Group();
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.78, 6).rotateX(Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#d9c09a', roughness: 0.6 }));
+    shaft.position.z = -0.39;
+    const head = new THREE.Mesh(new THREE.ConeGeometry(0.02, 0.07, 8).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#c7ccd6', metalness: 0.8, roughness: 0.3 }));
+    head.position.z = -0.81;
+    g.add(shaft, head);
+    const fl = new THREE.MeshStandardMaterial({ color: '#e0564a', side: THREE.DoubleSide, roughness: 0.8 });
+    for (let i = 0; i < 3; i++) {
+      const f = new THREE.Mesh(new THREE.PlaneGeometry(0.035, 0.12).translate(0.02, 0, 0).rotateX(Math.PI / 2), fl);
+      f.position.z = -0.08;
+      f.rotation.z = (i / 3) * Math.PI * 2;
+      g.add(f);
+    }
+    g.traverse((o) => ((o as THREE.Mesh).castShadow = true));
+    return g;
+  }
+
+  private track(m: THREE.Mesh) {
+    {
+      this.disposables.push(m.geometry);
+      const mats = Array.isArray(m.material) ? m.material : [m.material];
+      mats.forEach((mm) => this.disposables.push(mm));
+    }
+  }
+
+  // ---------------------------------------------------------------- targets
+
+  private faceTexture(color: string) {
+    return canvasTexture(512, 512, (g) => {
+      ['#f7efe0', color, '#f7efe0', color, '#ffd27a'].forEach((c, i) => {
+        g.fillStyle = c;
+        g.beginPath();
+        g.arc(256, 256, 250 * (1 - i * 0.19), 0, Math.PI * 2);
+        g.fill();
+      });
+      g.strokeStyle = 'rgba(0,0,0,0.25)';
+      g.lineWidth = 3;
+      for (let i = 0; i < 5; i++) {
+        g.beginPath();
+        g.arc(256, 256, 250 * (1 - i * 0.19), 0, Math.PI * 2);
+        g.stroke();
+      }
+      g.fillStyle = '#1d1d1d';
+      g.beginPath();
+      g.arc(256, 256, 5, 0, Math.PI * 2);
+      g.fill();
+    });
+  }
+
+  /** The answer sign, drawn exactly like the 2D range: dark rounded board, coloured border, cream text. */
+  private signTexture(label: string, color: string, hover: boolean) {
+    const font = '800 64px Manrope Variable, system-ui, sans-serif';
+    const probe = document.createElement('canvas').getContext('2d')!;
+    probe.font = font;
+    const w = Math.max(360, Math.ceil(probe.measureText(label).width + 110));
+    const tex = canvasTexture(w, 150, (g) => {
+      g.fillStyle = hover ? '#3d2757' : '#2a1a3c';
+      g.beginPath();
+      g.roundRect(8, 8, w - 16, 134, 36);
+      g.fill();
+      g.strokeStyle = hover ? '#ffd27a' : color;
+      g.lineWidth = 10;
+      g.stroke();
+      g.fillStyle = '#fff4dc';
+      g.font = font;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText(label, w / 2, 80);
+    });
+    return { tex, aspect: w / 150 };
+  }
+
+  private makeTarget(label: string, index: number): Target {
+    const color = COLORS[index % 3];
+    const r = 1.25;
+    const group = new THREE.Group();
+    const straw = new THREE.MeshStandardMaterial({ color: '#c9a45c', roughness: 1 });
+    const faceMat = new THREE.MeshStandardMaterial({ map: this.faceTexture(color), roughness: 0.85, emissive: '#ffd27a', emissiveIntensity: 0 });
+    const face = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.32, 48).rotateX(Math.PI / 2), [straw, faceMat, straw]);
+    face.castShadow = face.receiveShadow = true;
+    group.add(face);
+    const glow = new THREE.Mesh(new THREE.TorusGeometry(r + 0.06, 0.05, 8, 64), new THREE.MeshBasicMaterial({ color: '#ffd27a', transparent: true, opacity: 0 }));
+    glow.position.z = 0.17;
+    group.add(glow);
+    // Tripod stand
+    const wood = new THREE.MeshStandardMaterial({ color: '#5b3b26', roughness: 0.9 });
+    const legGeo = new THREE.BoxGeometry(0.09, 3, 0.09);
+    for (const [x, z, rx, rz] of [
+      [-0.7, 0.15, 0.08, -0.22],
+      [0.7, 0.15, 0.08, 0.22],
+      [0, -0.55, -0.32, 0],
+    ]) {
+      const leg = new THREE.Mesh(legGeo, wood);
+      leg.position.set(x * 0.6, -0.5, z);
+      leg.rotation.set(rx, 0, rz);
+      leg.castShadow = true;
+      group.add(leg);
+    }
+    // Answer sign on two posts above the face
+    const { tex, aspect } = this.signTexture(label, color, false);
+    const h = 0.78;
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(h * aspect, h), new THREE.MeshBasicMaterial({ map: tex, transparent: true, toneMapped: false }));
+    sign.position.set(0, r + 0.8, 0.05);
+    group.add(sign);
+    for (const x of [-0.35, 0.35]) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.5, 0.04), wood);
+      post.position.set(x, r + 0.22, 0);
+      group.add(post);
+    }
+    this.scene.add(group);
+    return { label, index, group, face, glow, sign, base: new THREE.Vector3(), r, hover: 0, wobble: 0, phase: rnd() * 6 };
+  }
+
+  private clearRound() {
+    for (const t of this.targets) {
+      this.scene.remove(t.group);
+      t.group.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (!m.isMesh) return;
+        m.geometry.dispose();
+        (Array.isArray(m.material) ? m.material : [m.material]).forEach((mm) => {
+          (mm as THREE.MeshStandardMaterial).map?.dispose();
+          mm.dispose();
+        });
+      });
+    }
+    for (const a of this.arrows) {
+      this.scene.remove(a.mesh, a.trail);
+      a.trail.geometry.dispose();
+    }
+    this.targets = [];
+    this.arrows = [];
+  }
+
+  // ---------------------------------------------------------------- input
 
   private resize = () => {
-    this.dpr = Math.min(2, window.devicePixelRatio || 1);
+    this.dpr = Math.min(1.75, window.devicePixelRatio || 1);
     this.W = window.innerWidth;
     this.H = window.innerHeight;
-    this.canvas.width = this.W * this.dpr;
-    this.canvas.height = this.H * this.dpr;
-    this.canvas.style.width = `${this.W}px`;
-    this.canvas.style.height = `${this.H}px`;
-    this.groundY = this.H * 0.8;
-    this.bow = { x: Math.max(110, this.W * 0.11), y: this.groundY - 70 };
-    this.bg = null;
-    if (this.targets.length) this.layoutTargets();
+    this.renderer.setPixelRatio(this.dpr);
+    this.renderer.setSize(this.W, this.H);
+    this.overlay.width = this.W * this.dpr;
+    this.overlay.height = this.H * this.dpr;
+    this.overlay.style.width = `${this.W}px`;
+    this.overlay.style.height = `${this.H}px`;
+    this.camera.aspect = this.W / this.H;
+    this.camera.updateProjectionMatrix();
   };
 
   private bind() {
     window.addEventListener('resize', this.resize);
     const point = (e: PointerEvent) => {
-      // On touch the reticle floats above the finger so the finger doesn't hide it.
       this.touchLift = e.pointerType === 'touch' ? 70 : 0;
       this.aimAt(e.clientX, e.clientY - this.touchLift);
     };
-    this.canvas.addEventListener('pointermove', point);
-    this.canvas.addEventListener('pointerdown', (e) => {
-      this.canvas.setPointerCapture(e.pointerId);
+    this.overlay.addEventListener('pointermove', point);
+    this.overlay.addEventListener('pointerdown', (e) => {
+      this.overlay.setPointerCapture(e.pointerId);
       point(e);
       this.startDraw();
     });
-    this.canvas.addEventListener('pointerup', () => this.release());
-    this.canvas.addEventListener('pointercancel', () => {
+    this.overlay.addEventListener('pointerup', () => this.release());
+    this.overlay.addEventListener('pointercancel', () => {
       this.drawing = false;
       this.power = 0;
     });
@@ -311,19 +796,22 @@ export class ArrowGame {
   };
 
   private aimAt(x: number, y: number) {
-    this.aim.x = Math.max(this.bow.x + 120, Math.min(this.W - 20, x));
-    this.aim.y = Math.max(90, Math.min(this.groundY - 10, y));
+    this.aim.x = Math.max(20, Math.min(this.W - 20, x));
+    this.aim.y = Math.max(90, Math.min(this.H - 120, y));
+  }
+
+  private canShoot() {
+    return !this.locked && this.cam === 'aim' && this.arrowsLeft > 0 && !this.arrows.some((a) => a.flying);
   }
 
   private startDraw() {
-    if (this.locked || this.arrowsLeft <= 0 || this.arrows.some((a) => a.flying)) return;
+    if (!this.canShoot()) return;
     if (this.sfx.ctx?.state === 'suspended') this.sfx.ctx.resume();
     this.drawing = true;
     this.power = 0;
     this.fullTime = 0;
   }
 
-  /** How far the reticle wanders right now, in pixels. */
   private swayAmp() {
     if (!this.drawing) return 14;
     const settle = 14 - Math.min(1, this.power / FULL_DRAW) * 11.5;
@@ -331,15 +819,26 @@ export class ArrowGame {
     return Math.min(46, settle + tired);
   }
 
-  /** Steady = full draw and not yet tired: the moment to release. */
   private steady() {
     return this.drawing && this.power >= FULL_DRAW && this.fullTime <= STEADY_TIME;
   }
 
-  /** Where the arrow lands if released now: the reticle, dropped short when under-drawn. */
-  private landingPoint() {
-    const drop = Math.max(0, FULL_DRAW - this.power) * this.H * 0.55;
-    return { x: this.reticle.x - drop * 0.35, y: Math.min(this.groundY + 20, this.reticle.y + drop) };
+  /** What the reticle points at: the aimed target (if any) and the 3D point. */
+  private pick(sx: number, sy: number) {
+    const ndc = new THREE.Vector2((sx / this.W) * 2 - 1, -(sy / this.H) * 2 + 1);
+    this.ray.setFromCamera(ndc, this.camera);
+    const hits = this.ray.intersectObjects(this.targets.map((t) => t.face), false);
+    if (hits.length) {
+      const t = this.targets.find((x) => x.face === hits[0].object)!;
+      return { target: t, point: hits[0].point.clone() };
+    }
+    // Otherwise the ground, or a far backstop
+    const o = this.ray.ray.origin, d = this.ray.ray.direction;
+    if (d.y < -0.001) {
+      const k = -o.y / d.y;
+      if (k < 90) return { target: undefined, point: o.clone().addScaledVector(d, k) };
+    }
+    return { target: undefined, point: o.clone().addScaledVector(d, 90) };
   }
 
   private release() {
@@ -349,103 +848,64 @@ export class ArrowGame {
       this.power = 0;
       return;
     }
-    const p = this.landingPoint();
-    const shot = this.solve(p.x, p.y);
-    this.arrows.push({
-      x: this.bow.x,
-      y: this.bow.y,
-      vx: shot.vx,
-      vy: shot.vy,
-      angle: Math.atan2(shot.vy, shot.vx),
-      trail: [],
-      flying: true,
-      aimX: p.x,
-      aimY: p.y,
-      goal: shot.goal,
-    });
+    let { target, point } = this.pick(this.reticle.x, this.reticle.y);
+    // Under-drawn: the arrow drops short and low.
+    const start = this.camera.localToWorld(new THREE.Vector3(0.1, -0.12, -0.9));
+    const dist = start.distanceTo(point);
+    const short = Math.max(0, FULL_DRAW - this.power);
+    if (short > 0) {
+      point = start.clone().lerp(point, 1 - short * 0.35);
+      point.y -= short * dist * 0.18;
+      if (target && target.face.worldToLocal(point.clone()).setZ(0).length() > target.r) target = undefined;
+    }
+    const T = 0.35 + start.distanceTo(point) / 38;
+    const vel = point.clone().sub(start).addScaledVector(G, -0.5 * T * T).divideScalar(T);
+    const mesh = this.arrowMesh();
+    mesh.scale.setScalar(1.8); // easier to follow on the arrow cam
+    mesh.position.copy(start);
+    this.scene.add(mesh);
+    const trailPts = [start.clone()];
+    const trail = new THREE.Line(new THREE.BufferGeometry().setFromPoints(trailPts), new THREE.LineBasicMaterial({ color: '#ffe9a8', transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending }));
+    this.scene.add(trail);
+    const arrow: Arrow = { mesh, start, vel, t: 0, T, flying: true, goal: target, trail, trailPts };
+    if (target) arrow.local = target.face.worldToLocal(point.clone());
+    this.arrows.push(arrow);
+    this.nocked.visible = false;
     this.arrowsLeft--;
     this.shots++;
     this.power = 0;
     this.fullTime = 0;
     this.sfx.twang();
+    window.setTimeout(() => this.sfx.whoosh(), 80);
     this.syncHud();
-  }
-
-  private gravity() {
-    return this.H * 1.25;
-  }
-
-  /** The target whose face contains the point, if any. */
-  private targetAt(x: number, y: number) {
-    return this.targets.find((t) => Math.hypot(x - t.x, y - t.y) < t.r);
-  }
-
-  /**
-   * Launch velocity that makes the arrow pass exactly through (px, py). Flight time is chosen close to a natural
-   * value for the distance, but the arc must not clip any other target on the way (it lobs over them instead).
-   */
-  private solve(px: number, py: number): Shot {
-    const g = this.gravity();
-    const dx = px - this.bow.x, dy = py - this.bow.y;
-    const preferred = 0.5 + (Math.abs(dx) / this.W) * 0.75;
-    const goal = this.targetAt(px, py);
-    const make = (T: number): Shot => ({ vx: dx / T, vy: dy / T - 0.5 * g * T, time: T });
-    const clear = (s: Shot, signs: boolean) => {
-      for (let i = 1; i < 60; i++) {
-        const t = (s.time * i) / 60;
-        const x = this.bow.x + s.vx * t, y = this.bow.y + s.vy * t + 0.5 * g * t * t;
-        if (y > this.groundY) return false;
-        for (const tg of this.targets) {
-          if (tg === goal) continue;
-          if (Math.hypot(x - tg.x, y - tg.y) < tg.r + 8) return false;
-          // the answer sign above each target, when we can avoid it
-          if (signs && Math.abs(x - tg.x) < tg.r && y > tg.y - tg.r - 50 && y < tg.y - tg.r) return false;
-        }
-      }
-      return true;
-    };
-    // Best arc: clears every other target and sign; then one that only clears the other target faces.
-    for (const signs of [true, false]) {
-      let best: Shot | null = null;
-      for (let T = 0.4; T <= 2.4; T += 0.05) {
-        const s = make(T);
-        if (clear(s, signs) && (!best || Math.abs(T - preferred) < Math.abs(best.time - preferred))) best = s;
-      }
-      if (best) return { ...best, goal };
-    }
-    // Packed layout on a small screen: the aimed target is further down the range, so fly past the others.
-    return { ...make(preferred), goal };
+    // Arrow cam
+    this.cam = 'follow';
+    this.followed = arrow;
+    this.camTimer = 0;
   }
 
   // ---------------------------------------------------------------- rounds
 
   private startRound(i: number) {
+    this.clearRound();
     this.round = i;
     this.arrowsLeft = ARROWS_PER_ROUND;
-    this.arrows = [];
-    // Wind grows each round: -1..1, pushes the reticle sideways (and a little down).
     this.wind = (Math.random() < 0.5 ? -1 : 1) * (0.25 + Math.random() * 0.25) * (0.5 + i * 0.25);
     const r = this.rounds[i];
-    this.targets = r.choices.map((label, index) => ({ x: 0, baseY: 0, y: 0, r: 0, label, index, bob: Math.random() * 6, hitFlash: 0, hover: 0 }));
-    // Shuffle target positions so the answer order on screen isn't always the same.
-    this.targets.sort(() => Math.random() - 0.5);
-    this.layoutTargets();
+    const order = r.choices.map((label, index) => ({ label, index })).sort(() => Math.random() - 0.5);
+    this.targets = order.map(({ label, index }, k) => {
+      const t = this.makeTarget(label, index);
+      const [x, z, y] = SLOTS[(k + i) % 3];
+      t.base.set(x, y, z);
+      t.group.position.copy(t.base);
+      t.group.lookAt(HOME.x, y, HOME.z);
+      return t;
+    });
+    this.nocked.visible = true;
     this.root.querySelector('.ag-rn')!.textContent = String(i + 1);
     this.root.querySelector('.ag-prompt')!.innerHTML = esc(r.prompt);
     this.syncHud();
     this.banner(`Round ${i + 1}`, r.prompt);
-  }
-
-  private layoutTargets() {
-    const xs = [0.5, 0.68, 0.86];
-    const hs = [0.2, 0.36, 0.27];
-    const r = Math.max(40, Math.min(this.W, this.H) * 0.068);
-    this.targets.forEach((t, i) => {
-      t.x = this.W * xs[i];
-      t.baseY = this.groundY - this.H * hs[(i + this.round) % 3];
-      t.y = t.baseY;
-      t.r = r;
-    });
   }
 
   private banner(title: string, sub: string) {
@@ -464,7 +924,6 @@ export class ArrowGame {
 
   // The answer key never reaches the browser: the pick is recorded here and graded by the server at the end.
   private resolveRound(pick: number) {
-    // A second arrow landing after the round is decided must not skip the next round.
     if (this.picks[this.round] !== undefined) return;
     this.picks[this.round] = pick;
     this.syncHud();
@@ -472,7 +931,7 @@ export class ArrowGame {
     window.setTimeout(() => {
       if (this.round + 1 < this.rounds.length) this.startRound(this.round + 1);
       else this.finish();
-    }, 1400);
+    }, 1900);
   }
 
   private finish() {
@@ -528,6 +987,14 @@ export class ArrowGame {
     window.removeEventListener('keydown', this.keydown);
     window.removeEventListener('keyup', this.keyup);
     this.sfx.ctx?.close().catch(() => {});
+    this.clearRound();
+    this.scene.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (m.geometry) m.geometry.dispose();
+    });
+    this.disposables.forEach((d) => d.dispose());
+    this.renderer.dispose();
+    this.renderer.forceContextLoss();
     this.root.classList.add('closing');
     window.setTimeout(() => this.root.remove(), 350);
     if (exit) this.onExit();
@@ -539,24 +1006,31 @@ export class ArrowGame {
     this.raf = requestAnimationFrame(this.loop);
     const raw = Math.min(0.05, (now - this.last) / 1000);
     this.last = now;
-    // Slow motion when an arrow is about to reach a target.
-    const near = this.arrows.some((a) => a.flying && this.targets.some((t) => Math.hypot(a.x - t.x, a.y - t.y) < t.r * 3));
-    this.slowmo += ((near ? 0.3 : 1) - this.slowmo) * Math.min(1, raw * 10);
-    const dt = raw * this.slowmo;
-    this.time += dt;
-    this.update(dt, raw);
-    this.render();
+    this.step(raw);
   };
 
+  /** One frame of game time (exposed in dev builds for automated tests). */
+  step(raw: number) {
+    this.timeScale += ((this.wantSlowmo() ? 0.28 : 1) - this.timeScale) * Math.min(1, raw * 8);
+    const dt = raw * this.timeScale;
+    this.time += dt;
+    this.update(dt, raw);
+    this.renderer.render(this.scene, this.camera);
+    this.drawOverlay();
+  }
+
+  private wantSlowmo() {
+    const a = this.followed;
+    return !!a && a.flying && a.T - a.t < 0.32 && this.cam === 'follow';
+  }
+
   private update(dt: number, raw: number) {
-    // Keyboard aiming
     const k = 420 * raw;
     if (this.keys.has('ArrowUp')) this.aimAt(this.aim.x, this.aim.y - k);
     if (this.keys.has('ArrowDown')) this.aimAt(this.aim.x, this.aim.y + k);
     if (this.keys.has('ArrowLeft')) this.aimAt(this.aim.x - k, this.aim.y);
     if (this.keys.has('ArrowRight')) this.aimAt(this.aim.x + k, this.aim.y);
 
-    // Drawing the bow
     if (this.drawing) {
       this.power = Math.min(1, this.power + raw * 1.5);
       if (this.power >= FULL_DRAW) this.fullTime += raw;
@@ -564,90 +1038,197 @@ export class ArrowGame {
     }
     this.syncPower();
 
-    // Reticle = aim + breathing sway + wind push (what you see is where the arrow goes)
     const amp = this.swayAmp();
     const t = this.time;
     const windPush = this.wind * (this.drawing ? 26 + this.fullTime * 18 : 18);
     this.reticle.x = this.aim.x + (Math.sin(t * 1.9) * 0.7 + Math.sin(t * 3.7 + 1.3) * 0.3) * amp + windPush;
     this.reticle.y = this.aim.y + (Math.cos(t * 1.4 + 0.5) * 0.7 + Math.sin(t * 2.9) * 0.3) * amp + Math.abs(this.wind) * 4;
 
-    // Bow points along the launch direction for the current landing point.
-    if (!this.locked) {
-      const p = this.landingPoint();
-      const s = this.solve(p.x, p.y);
-      this.angle = Math.atan2(s.vy, s.vx);
-    }
+    // Bow: string pull and a gentle breathing bob
+    const pull = this.drawing ? this.power * 0.26 : 0;
+    const pos = this.bowString.geometry.attributes.position as THREE.BufferAttribute;
+    pos.setZ(1, 0.02 + pull);
+    pos.needsUpdate = true;
+    this.nocked.position.z = 0.02 + pull;
+    this.bow.position.y = -0.3 + Math.sin(this.time * 1.6) * 0.006 - pull * 0.05;
+    this.bow.visible = this.cam === 'aim' || this.cam === 'return';
 
-    // Later rounds: targets drift up and down.
+    // Targets: hover glow, hit wobble, and drifting targets in later rounds
+    const hover = this.cam === 'aim' && !this.locked ? this.pick(this.reticle.x, this.reticle.y).target : undefined;
     for (const tg of this.targets) {
-      tg.y = tg.baseY + (this.round >= 3 ? Math.sin(this.time * 1.2 + tg.bob) * this.H * 0.04 : 0);
-      tg.hitFlash = Math.max(0, tg.hitFlash - dt * 2);
-      const on = Math.hypot(this.reticle.x - tg.x, this.reticle.y - tg.y) < tg.r;
-      tg.hover += ((on ? 1 : 0) - tg.hover) * Math.min(1, raw * 12);
+      const drift = this.round >= 3 ? Math.sin(this.time * 0.7 + tg.phase) * 1.3 : 0;
+      tg.group.position.set(tg.base.x + drift, tg.base.y + (this.round >= 3 ? Math.sin(this.time * 1.3 + tg.phase) * 0.15 : 0), tg.base.z);
+      const on = tg === hover ? 1 : 0;
+      const before = tg.hover > 0.5;
+      tg.hover += (on - tg.hover) * Math.min(1, raw * 12);
+      if (before !== tg.hover > 0.5) {
+        const { tex } = this.signTexture(tg.label, COLORS[tg.index % 3], tg.hover > 0.5);
+        const mat = tg.sign.material as THREE.MeshBasicMaterial;
+        mat.map?.dispose();
+        mat.map = tex;
+        mat.needsUpdate = true;
+      }
+      (tg.glow.material as THREE.MeshBasicMaterial).opacity = tg.hover * 0.9;
+      ((tg.face.material as THREE.Material[])[1] as THREE.MeshStandardMaterial).emissiveIntensity = tg.hover * 0.18;
+      tg.sign.scale.setScalar(1 + tg.hover * 0.1);
+      tg.wobble *= Math.exp(-raw * 5);
+      tg.face.rotation.x = Math.sin(this.time * 30) * tg.wobble * 0.08;
     }
 
-    const g = this.gravity();
+    // Arrows
     for (const a of this.arrows) {
-      if (a.stuckTo) {
-        a.x = a.stuckTo.x + a.offX!;
-        a.y = a.stuckTo.y + a.offY!;
-        continue;
-      }
       if (!a.flying) continue;
-      // Small sub-steps so a slow frame can't carry the arrow straight through a target.
-      const steps = Math.max(1, Math.ceil(dt / (1 / 240)));
-      const h = dt / steps;
-      for (let s = 0; s < steps && a.flying; s++) {
-        a.vy += g * h;
-        a.x += a.vx * h;
-        a.y += a.vy * h;
-        a.angle = Math.atan2(a.vy, a.vx);
-        for (const tg of this.targets) {
-          if (a.goal && tg !== a.goal) continue;
-          const d = Math.hypot(a.x - tg.x, a.y - tg.y);
-          if (d < tg.r) {
-            // Aimed at this target: the arrow lands exactly on the + (it is on this same arc a moment later).
-            if (Math.hypot(a.aimX - tg.x, a.aimY - tg.y) < tg.r) {
-              a.x = a.aimX;
-              a.y = a.aimY;
-            }
-            this.hit(a, tg, Math.hypot(a.x - tg.x, a.y - tg.y) / tg.r, a.x, a.y);
-            break;
-          }
-        }
-        if (a.y > this.groundY + 6) break;
+      a.t += dt;
+      const tt = Math.min(a.t, a.goal ? a.T : a.t);
+      const p = a.start.clone().addScaledVector(a.vel, tt).addScaledVector(G, 0.5 * tt * tt);
+      const v = a.vel.clone().addScaledVector(G, tt);
+      // A drifting target: steer the last stretch onto the aimed spot so the + stays truthful.
+      if (a.goal && a.local && a.t > a.T * 0.7) {
+        const aimNow = a.goal.face.localToWorld(a.local.clone());
+        const aimThen = a.start.clone().addScaledVector(a.vel, a.T).addScaledVector(G, 0.5 * a.T * a.T);
+        p.add(aimNow.sub(aimThen).multiplyScalar((a.t - a.T * 0.7) / (a.T * 0.3)));
       }
-      a.trail.push({ x: a.x, y: a.y });
-      if (a.trail.length > 26) a.trail.shift();
-      if (a.flying && (a.y > this.groundY + 6 || a.x > this.W + 60 || a.x < -60)) {
-        a.flying = false;
-        if (a.y > this.groundY) {
-          a.y = this.groundY + 4;
-          this.burst(a.x, this.groundY, '#8b6b43', 14);
-          this.sfx.thunk();
-        }
-        this.popups.push({ x: Math.min(this.W - 80, Math.max(80, a.x)), y: this.groundY - 30, text: 'Miss', color: '#ffb4a3', life: 1 });
-        if (this.arrowsLeft <= 0) this.resolveRound(-1);
-      }
+      a.mesh.position.copy(p);
+      a.mesh.lookAt(p.clone().sub(v));
+      a.trailPts.push(p.clone());
+      if (a.trailPts.length > 24) a.trailPts.shift();
+      a.trail.geometry.setFromPoints(a.trailPts);
+      if (a.goal && a.t >= a.T) this.hit(a);
+      else if (!a.goal && p.y <= 0.02) this.miss(a, p);
+      else if (a.t > 6) this.miss(a, p);
     }
 
-    for (const p of this.particles) {
-      p.vy += 600 * dt;
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-      p.life -= dt;
+    // Camera: shooting line → follow the arrow → impact view → back
+    this.updateCamera(raw);
+
+    // Wind: windsock, flags, pollen, birds
+    // The sock points downwind (+x for a positive wind) and droops when the wind is light.
+    const sock = this.windsock.getObjectByName('sock')!;
+    const w = this.wind;
+    sock.rotation.y = (w >= 0 ? 0 : Math.PI) + Math.sin(this.time * 3) * 0.06;
+    sock.rotation.z = -(1 - Math.min(1, Math.abs(w) * 1.6)) * 0.9 + Math.sin(this.time * 7) * 0.03;
+    for (const f of this.flags) {
+      const arr = (f.mesh.geometry.attributes.position as THREE.BufferAttribute).array as Float32Array;
+      for (let i = 0; i < arr.length; i += 3) {
+        const x = f.base[i];
+        arr[i + 2] = f.base[i + 2] + Math.sin(this.time * 6 + x * 4 + f.phase) * 0.08 * x;
+      }
+      f.mesh.geometry.attributes.position.needsUpdate = true;
+      f.mesh.rotation.y = w >= 0 ? 0 : Math.PI;
     }
-    this.particles = this.particles.filter((p) => p.life > 0);
-    for (const p of this.popups) {
-      p.y -= 40 * dt;
-      p.life -= dt * 0.8;
+    const pp = this.pollen.geometry.attributes.position as THREE.BufferAttribute;
+    const pa = pp.array as Float32Array;
+    for (let i = 0; i < pa.length; i += 3) {
+      pa[i] += (w * 2.2 + Math.sin(this.time + i) * 0.2) * dt;
+      pa[i + 1] += Math.sin(this.time * 0.8 + i * 0.37) * 0.12 * dt;
+      if (pa[i] > 30) pa[i] = -30;
+      if (pa[i] < -30) pa[i] = 30;
     }
+    pp.needsUpdate = true;
+    for (const b of this.birds) {
+      b.g.position.x += b.speed * dt;
+      if (b.g.position.x > 90) b.g.position.x = -90;
+      b.g.position.y = b.y + Math.sin(this.time * 0.5 + b.phase) * 1.5;
+      b.g.children[0].scale.y = 0.4 + Math.abs(Math.sin(this.time * 4 + b.phase)) * 1.2;
+    }
+
+    // Sparks and popups
+    const sp = this.sparkPoints.geometry.attributes.position as THREE.BufferAttribute;
+    const sa = sp.array as Float32Array;
+    this.sparks = this.sparks.filter((s) => (s.life -= dt) > 0);
+    this.sparks.forEach((s, i) => {
+      s.v.y -= 6 * dt;
+      s.p.addScaledVector(s.v, dt);
+      if (i < 300) sa.set([s.p.x, s.p.y, s.p.z], i * 3);
+    });
+    for (let i = this.sparks.length; i < 300; i++) sa.set([0, -100, 0], i * 3);
+    sp.needsUpdate = true;
+    for (const p of this.popups) p.life -= raw * 0.7;
     this.popups = this.popups.filter((p) => p.life > 0);
-    this.shake = Math.max(0, this.shake - raw * 30);
-    for (const c of this.clouds) {
-      c.x += c.v * raw;
-      if (c.x > this.W + 200) c.x = -200;
+    this.shake = Math.max(0, this.shake - raw * 3);
+  }
+
+  private updateCamera(raw: number) {
+    const a = this.followed;
+    let pos: THREE.Vector3, look: THREE.Vector3, ease: number;
+    if (this.cam === 'follow' && a) {
+      const dir = a.vel.clone().addScaledVector(G, a.t).normalize();
+      pos = a.mesh.position.clone().addScaledVector(dir, -2.2).add(new THREE.Vector3(0.35, 0.35, 0));
+      look = a.mesh.position.clone().addScaledVector(dir, 4);
+      ease = this.camTimer < 0.25 ? 6 : 14;
+      this.camTimer += raw;
+    } else if (this.cam === 'impact' && a) {
+      const at = this.impactAt;
+      pos = at.clone().add(new THREE.Vector3(2.6 + Math.sin(this.camTimer * 0.6) * 0.4, 0.7, 3.2));
+      look = at.clone();
+      ease = 5;
+      this.camTimer += raw;
+      if (this.camTimer > 1.5) {
+        this.cam = 'return';
+        this.camTimer = 0;
+      }
+    } else {
+      // Aim view: the camera leans slightly towards the reticle.
+      const nx = this.reticle.x / Math.max(1, this.W) - 0.5;
+      const ny = this.reticle.y / Math.max(1, this.H) - 0.5;
+      pos = HOME.clone();
+      look = LOOK.clone().add(new THREE.Vector3(nx * 3, -ny * 1.5, 0));
+      ease = this.cam === 'return' ? 4 : 10;
+      if (this.cam === 'return') {
+        this.camTimer += raw;
+        if (this.camTimer > 0.8) {
+          this.cam = 'aim';
+          this.followed = null;
+          if (this.arrowsLeft > 0 && this.picks[this.round] === undefined) this.nocked.visible = true;
+        }
+      }
     }
+    const k = 1 - Math.exp(-raw * ease);
+    this.camPos.lerp(pos, k);
+    this.camLook.lerp(look, k);
+    this.camera.position.copy(this.camPos);
+    if (this.shake > 0) this.camera.position.add(new THREE.Vector3((Math.random() - 0.5) * this.shake * 0.05, (Math.random() - 0.5) * this.shake * 0.05, 0));
+    this.camera.lookAt(this.camLook);
+  }
+
+  private hit(a: Arrow) {
+    const t = a.goal!;
+    a.flying = false;
+    // Stick the arrow into the face at the aimed spot, sunk a little into the straw.
+    const local = a.local!.clone();
+    local.z = 0.12;
+    const at = t.face.localToWorld(local.clone());
+    const dir = a.vel.clone().addScaledVector(G, a.T).normalize();
+    a.mesh.position.copy(at).addScaledVector(dir, 0.18);
+    a.mesh.lookAt(a.mesh.position.clone().sub(dir));
+    this.impactAt.copy(at);
+    t.face.attach(a.mesh);
+    const rel = Math.hypot(local.x, local.y) / t.r;
+    const ring = rel < 0.25 ? 10 : rel < 0.6 ? 7 : 5;
+    this.ringScores.push(ring);
+    t.wobble = 1;
+    this.shake = ring === 10 ? 1.4 : 0.8;
+    for (let i = 0; i < (ring === 10 ? 70 : 40); i++) {
+      this.sparks.push({ p: at.clone(), v: new THREE.Vector3((Math.random() - 0.5) * 5, Math.random() * 4, (Math.random() - 0.2) * 4), life: 0.5 + Math.random() * 0.7 });
+    }
+    this.sfx.thunk(ring === 10);
+    this.popups.push({ pos: at.clone().add(new THREE.Vector3(0, 0.6, 0)), text: ring === 10 ? 'BULLSEYE +10' : `+${ring}`, color: ring === 10 ? '#ffd27a' : '#ffffff', life: 1.6, big: ring === 10 });
+    this.popups.push({ pos: at.clone().add(new THREE.Vector3(0, -1.2, 0)), text: `You chose "${t.label}"`, color: '#e8e0ff', life: 1.8, big: false });
+    this.cam = 'impact';
+    this.camTimer = 0;
+    this.resolveRound(t.index);
+  }
+
+  private miss(a: Arrow, p: THREE.Vector3) {
+    a.flying = false;
+    a.mesh.position.set(p.x, Math.max(0.05, p.y), p.z);
+    this.impactAt.copy(a.mesh.position);
+    for (let i = 0; i < 18; i++) this.sparks.push({ p: a.mesh.position.clone(), v: new THREE.Vector3((Math.random() - 0.5) * 2, Math.random() * 2, (Math.random() - 0.5) * 2), life: 0.5 });
+    this.sfx.thunk();
+    this.popups.push({ pos: a.mesh.position.clone().add(new THREE.Vector3(0, 0.8, 0)), text: 'Miss', color: '#ffb4a3', life: 1.2, big: false });
+    this.cam = 'impact';
+    this.camTimer = 0.6;
+    if (this.arrowsLeft <= 0) this.resolveRound(-1);
   }
 
   private syncPower() {
@@ -656,8 +1237,8 @@ export class ArrowGame {
     const status = this.root.querySelector<HTMLElement>('.ag-status')!;
     let text: string;
     let cls: string;
-    if (this.locked || this.arrows.some((a) => a.flying)) {
-      text = '…';
+    if (this.locked || !this.canShoot()) {
+      text = this.cam === 'follow' ? '🏹 Arrow cam…' : '…';
       cls = '';
     } else if (!this.drawing) {
       const over = this.targets.find((t) => t.hover > 0.5);
@@ -680,317 +1261,43 @@ export class ArrowGame {
     }
   }
 
-  private hit(a: Arrow, t: Target, rel: number, x: number, y: number) {
-    a.flying = false;
-    a.stuckTo = t;
-    a.offX = a.x - t.x;
-    a.offY = a.y - t.y;
-    const ring = rel < 0.25 ? 10 : rel < 0.6 ? 7 : 5;
-    this.ringScores.push(ring);
-    t.hitFlash = 1;
-    this.shake = ring === 10 ? 14 : 8;
-    this.burst(x, y, COLORS[t.index % 3], ring === 10 ? 42 : 24);
-    this.sfx.thunk(ring === 10);
-    this.popups.push({ x: t.x, y: t.y - t.r - 60, text: ring === 10 ? 'BULLSEYE +10' : `+${ring}`, color: ring === 10 ? '#ffd27a' : '#ffffff', life: 1.4 });
-    this.popups.push({ x: t.x, y: t.y + t.r + 50, text: `You chose "${t.label}"`, color: '#e8e0ff', life: 1.6 });
-    this.resolveRound(t.index);
-  }
+  // ---------------------------------------------------------------- 2D overlay: reticle, popups, slow-mo
 
-  private burst(x: number, y: number, color: string, n: number) {
-    for (let i = 0; i < n; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const s = 80 + Math.random() * 320;
-      this.particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 120, life: 0.5 + Math.random() * 0.6, max: 1.1, color, size: 2 + Math.random() * 3 });
-    }
-  }
-
-  // ---------------------------------------------------------------- rendering
-
-  private background() {
-    const c = document.createElement('canvas');
-    c.width = this.W * this.dpr;
-    c.height = this.H * this.dpr;
-    const g = c.getContext('2d')!;
-    g.scale(this.dpr, this.dpr);
-    const sky = g.createLinearGradient(0, 0, 0, this.groundY);
-    sky.addColorStop(0, '#1a1033');
-    sky.addColorStop(0.45, '#4b2a6b');
-    sky.addColorStop(0.8, '#d9784a');
-    sky.addColorStop(1, '#f2b35c');
-    g.fillStyle = sky;
-    g.fillRect(0, 0, this.W, this.groundY);
-    // Sun
-    const sun = g.createRadialGradient(this.W * 0.72, this.groundY - this.H * 0.12, 0, this.W * 0.72, this.groundY - this.H * 0.12, this.H * 0.25);
-    sun.addColorStop(0, 'rgba(255,230,160,0.95)');
-    sun.addColorStop(0.25, 'rgba(255,190,110,0.55)');
-    sun.addColorStop(1, 'rgba(255,160,90,0)');
-    g.fillStyle = sun;
-    g.fillRect(0, 0, this.W, this.groundY);
-    // Stars
-    g.fillStyle = 'rgba(255,255,255,0.7)';
-    for (let i = 0; i < 90; i++) g.fillRect((i * 97.3) % this.W, (i * 53.7) % (this.groundY * 0.4), 1.4, 1.4);
-    // Far hills
-    const hill = (color: string, base: number, amp: number, freq: number, phase: number) => {
-      g.fillStyle = color;
-      g.beginPath();
-      g.moveTo(0, this.groundY);
-      for (let x = 0; x <= this.W; x += 8) g.lineTo(x, base - Math.sin(x * freq + phase) * amp - Math.sin(x * freq * 2.3 + phase) * amp * 0.35);
-      g.lineTo(this.W, this.groundY);
-      g.fill();
-    };
-    hill('#3b2350', this.groundY - this.H * 0.16, this.H * 0.05, 0.004, 1);
-    // Palace silhouette on the far hill
-    this.palace(g, this.W * 0.34, this.groundY - this.H * 0.17, this.H * 0.0022);
-    hill('#2a1a3c', this.groundY - this.H * 0.08, this.H * 0.035, 0.007, 3);
-    // Ground
-    const ground = g.createLinearGradient(0, this.groundY, 0, this.H);
-    ground.addColorStop(0, '#2f4a2c');
-    ground.addColorStop(1, '#16241a');
-    g.fillStyle = ground;
-    g.fillRect(0, this.groundY, this.W, this.H - this.groundY);
-    g.fillStyle = 'rgba(160,210,120,0.18)';
-    for (let x = 0; x < this.W; x += 6) g.fillRect(x, this.groundY - 3 - ((x * 13) % 7), 2, 5 + ((x * 7) % 6));
-    return c;
-  }
-
-  /** A small Mysuru Palace silhouette with lit windows. k scales it with the screen. */
-  private palace(g: CanvasRenderingContext2D, cx: number, base: number, k: number) {
-    const s = k * 450;
-    g.fillStyle = '#231432';
-    const dome = (x: number, w: number, h: number, y: number) => {
-      g.beginPath();
-      g.ellipse(x, y, w * s, h * s, 0, Math.PI, 0);
-      g.fill();
-      g.fillRect(x - 1.5 * s, y - h * s - 14 * s, 3 * s, 14 * s);
-    };
-    g.fillRect(cx - 110 * s, base - 42 * s, 220 * s, 42 * s);
-    g.fillRect(cx - 34 * s, base - 78 * s, 68 * s, 40 * s);
-    dome(cx, 30, 34, base - 78 * s);
-    dome(cx - 90 * s, 16, 18, base - 42 * s);
-    dome(cx + 90 * s, 16, 18, base - 42 * s);
-    g.fillStyle = 'rgba(255,210,120,0.55)';
-    for (let i = -9; i <= 9; i++) g.fillRect(cx + i * 11 * s, base - 30 * s, 3 * s, 5 * s);
-  }
-
-  private render() {
-    const g = this.g;
+  private drawOverlay() {
+    const g = this.o;
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    if (!this.bg) this.bg = this.background();
-    const sx = (Math.random() - 0.5) * this.shake;
-    const sy = (Math.random() - 0.5) * this.shake;
-    g.save();
-    g.translate(sx, sy);
-    g.drawImage(this.bg, 0, 0, this.W, this.H);
-
-    // Clouds
-    for (const c of this.clouds) {
-      g.fillStyle = 'rgba(255,220,200,0.12)';
-      g.beginPath();
-      g.ellipse(c.x, c.y, 90 * c.s, 22 * c.s, 0, 0, Math.PI * 2);
-      g.ellipse(c.x + 50 * c.s, c.y - 10 * c.s, 60 * c.s, 20 * c.s, 0, 0, Math.PI * 2);
-      g.fill();
-    }
-    // Fireflies
-    for (const f of this.fireflies) {
-      const a = 0.4 + Math.sin(this.time * 2 + f.p) * 0.4;
-      g.fillStyle = `rgba(255,236,150,${a})`;
-      g.beginPath();
-      g.arc(f.x + Math.sin(this.time + f.p) * 8, f.y + Math.cos(this.time * 0.7 + f.p) * 6, 1.8, 0, Math.PI * 2);
-      g.fill();
-    }
-
-    this.drawWind();
-    for (const t of this.targets) this.drawTarget(t);
-    this.drawArcher();
-    if (this.drawing) this.drawPreview();
-    for (const a of this.arrows) this.drawArrow(a);
-
-    for (const p of this.particles) {
-      g.globalAlpha = Math.max(0, p.life / p.max);
-      g.fillStyle = p.color;
-      g.fillRect(p.x, p.y, p.size, p.size);
-    }
-    g.globalAlpha = 1;
-    g.textAlign = 'center';
-    for (const p of this.popups) {
-      g.globalAlpha = Math.min(1, p.life);
-      g.font = `800 ${p.text.startsWith('BULL') ? 26 : 18}px Manrope Variable, system-ui, sans-serif`;
-      g.fillStyle = 'rgba(0,0,0,0.45)';
-      g.fillText(p.text, p.x + 2, p.y + 2);
-      g.fillStyle = p.color;
-      g.fillText(p.text, p.x, p.y);
-    }
-    g.globalAlpha = 1;
-    if (!this.locked && this.arrowsLeft > 0 && !this.arrows.some((a) => a.flying)) this.drawReticle();
-    g.restore();
-
-    if (this.slowmo < 0.8) {
-      g.fillStyle = `rgba(20,10,40,${(0.8 - this.slowmo) * 0.5})`;
+    g.clearRect(0, 0, this.W, this.H);
+    if (this.timeScale < 0.8) {
+      const v = g.createRadialGradient(this.W / 2, this.H / 2, this.H * 0.3, this.W / 2, this.H / 2, this.H * 0.8);
+      v.addColorStop(0, 'rgba(0,0,0,0)');
+      v.addColorStop(1, `rgba(20,10,40,${(0.8 - this.timeScale) * 0.9})`);
+      g.fillStyle = v;
       g.fillRect(0, 0, this.W, this.H);
     }
-  }
-
-  private drawWind() {
-    const g = this.g;
-    const x = this.W - 150, y = 150;
-    const w = this.wind;
-    g.save();
-    g.fillStyle = 'rgba(15,10,30,0.55)';
-    g.beginPath();
-    g.roundRect(x - 70, y - 34, 140, 68, 14);
-    g.fill();
-    g.fillStyle = '#e8e0ff';
-    g.font = '700 11px Manrope Variable, system-ui, sans-serif';
     g.textAlign = 'center';
-    g.fillText('WIND', x, y - 16);
-    g.strokeStyle = '#ffd27a';
-    g.lineWidth = 3;
-    g.beginPath();
-    g.moveTo(x - 40, y + 6);
-    g.lineTo(x + 40, y + 6);
-    g.stroke();
-    const dir = Math.sign(w) || 1;
-    const len = Math.min(1, Math.abs(w)) * 40;
-    g.fillStyle = '#ffd27a';
-    g.beginPath();
-    g.moveTo(x + dir * (len + 8), y + 6);
-    g.lineTo(x + dir * len, y - 2);
-    g.lineTo(x + dir * len, y + 14);
-    g.fill();
-    // Flag rippling in the wind
-    g.fillStyle = '#ff7a5c';
-    g.beginPath();
-    g.moveTo(x - dir * 48, y + 22);
-    for (let i = 0; i <= 10; i++) g.lineTo(x - dir * 48 + dir * i * 6 * (0.3 + Math.abs(w)), y + 22 + Math.sin(this.time * 8 + i) * 2);
-    g.lineTo(x - dir * 48, y + 30);
-    g.fill();
-    g.fillText(`${Math.abs(w * 12).toFixed(1)} km/h ${dir > 0 ? '→' : '←'}`, x, y + 28);
-    g.restore();
-  }
-
-  private drawTarget(t: Target) {
-    const g = this.g;
-    const color = COLORS[t.index % 3];
-    // Stand
-    g.strokeStyle = '#5b3b26';
-    g.lineWidth = 6;
-    g.beginPath();
-    g.moveTo(t.x - t.r * 0.5, this.groundY);
-    g.lineTo(t.x, t.y);
-    g.lineTo(t.x + t.r * 0.5, this.groundY);
-    g.stroke();
-    // Glow when hit or aimed at
-    const glowA = Math.max(t.hitFlash * 0.7, t.hover * 0.35);
-    if (glowA > 0.01) {
-      const glow = g.createRadialGradient(t.x, t.y, t.r * 0.5, t.x, t.y, t.r * 2.2);
-      glow.addColorStop(0, `rgba(255,230,160,${glowA})`);
-      glow.addColorStop(1, 'rgba(255,230,160,0)');
-      g.fillStyle = glow;
-      g.beginPath();
-      g.arc(t.x, t.y, t.r * 2.2, 0, Math.PI * 2);
-      g.fill();
-    }
-    // Rings
-    const rings = ['#f7efe0', color, '#f7efe0', color, '#ffd27a'];
-    rings.forEach((c, i) => {
-      g.fillStyle = c;
-      g.beginPath();
-      g.arc(t.x, t.y, t.r * (1 - i * 0.19), 0, Math.PI * 2);
-      g.fill();
-    });
-    g.strokeStyle = t.hover > 0.5 ? '#ffd27a' : 'rgba(0,0,0,0.35)';
-    g.lineWidth = t.hover > 0.5 ? 4 : 2;
-    g.beginPath();
-    g.arc(t.x, t.y, t.r, 0, Math.PI * 2);
-    g.stroke();
-    // Answer sign above the target
-    const scale = 1 + t.hover * 0.12;
-    g.font = `800 ${Math.round(17 * scale)}px Manrope Variable, system-ui, sans-serif`;
-    const w = Math.max(t.r * 2, g.measureText(t.label).width + 28);
-    const h = 34 * scale;
-    const sy = t.y - t.r - 12 - h;
-    g.strokeStyle = '#5b3b26';
-    g.lineWidth = 2;
-    g.beginPath();
-    g.moveTo(t.x - w * 0.3, sy + h);
-    g.lineTo(t.x, t.y - t.r);
-    g.lineTo(t.x + w * 0.3, sy + h);
-    g.stroke();
-    g.fillStyle = t.hover > 0.5 ? '#3d2757' : '#2a1a3c';
-    g.beginPath();
-    g.roundRect(t.x - w / 2, sy, w, h, 10);
-    g.fill();
-    g.strokeStyle = t.hover > 0.5 ? '#ffd27a' : color;
-    g.lineWidth = 2.5;
-    g.stroke();
-    g.fillStyle = '#fff4dc';
-    g.textAlign = 'center';
-    g.fillText(t.label, t.x, sy + h * 0.68);
-  }
-
-  private drawArcher() {
-    const g = this.g;
-    const { x, y } = this.bow;
-    // Little hill and archer silhouette
-    g.fillStyle = '#23361f';
-    g.beginPath();
-    g.ellipse(x - 20, this.groundY + 6, 120, 34, 0, Math.PI, 0);
-    g.fill();
-    g.fillStyle = '#1a1033';
-    g.fillRect(x - 34, y - 6, 14, 70);
-    g.beginPath();
-    g.arc(x - 27, y - 22, 13, 0, Math.PI * 2);
-    g.fill();
-    // Bow
-    const pull = this.drawing ? this.power * 22 : 0;
-    g.save();
-    g.translate(x, y);
-    g.rotate(this.angle);
-    g.strokeStyle = '#8b5e3c';
-    g.lineWidth = 5;
-    g.beginPath();
-    g.arc(0, 0, 42, -1.2, 1.2);
-    g.stroke();
-    g.strokeStyle = '#f7efe0';
-    g.lineWidth = 1.5;
-    g.beginPath();
-    g.moveTo(Math.cos(-1.2) * 42, Math.sin(-1.2) * 42);
-    g.lineTo(-pull, 0);
-    g.lineTo(Math.cos(1.2) * 42, Math.sin(1.2) * 42);
-    g.stroke();
-    if (this.arrowsLeft > 0 && !this.arrows.some((a) => a.flying) && !this.locked) {
-      this.arrowShape(-pull, 0, 0, 1);
-    }
-    g.restore();
-  }
-
-  /** Faint dotted arc to the landing point while drawing, so the player sees the lob. */
-  private drawPreview() {
-    const g = this.g;
-    const p = this.landingPoint();
-    const s = this.solve(p.x, p.y);
-    const grav = this.gravity();
-    g.fillStyle = 'rgba(255,236,170,0.55)';
-    for (let i = 1; i < 24; i++) {
-      const t = (s.time * i) / 24;
-      g.globalAlpha = 0.15 + (i / 24) * 0.5;
-      g.beginPath();
-      g.arc(this.bow.x + s.vx * t, this.bow.y + s.vy * t + 0.5 * grav * t * t, 2.2, 0, Math.PI * 2);
-      g.fill();
+    for (const p of this.popups) {
+      const s = p.pos.clone().project(this.camera);
+      if (s.z > 1) continue;
+      const x = (s.x * 0.5 + 0.5) * this.W, y = (-s.y * 0.5 + 0.5) * this.H - (1.6 - p.life) * 30;
+      g.globalAlpha = Math.min(1, p.life);
+      g.font = `800 ${p.big ? 32 : 20}px Manrope Variable, system-ui, sans-serif`;
+      g.fillStyle = 'rgba(0,0,0,0.5)';
+      g.fillText(p.text, x + 2, y + 2);
+      g.fillStyle = p.color;
+      g.fillText(p.text, x, y);
     }
     g.globalAlpha = 1;
+    if (this.canShoot()) this.drawReticle();
   }
 
-  /** The + reticle: exactly where the arrow will land. Its ring shows how steady the shot is. */
   private drawReticle() {
-    const g = this.g;
+    const g = this.o;
     const { x, y } = this.reticle;
     const amp = this.swayAmp();
     const steady = this.steady();
     const tired = this.drawing && this.fullTime > STEADY_TIME;
     const col = steady ? '#5fd68a' : tired ? '#ff6b5a' : this.drawing ? '#ffd27a' : '#ffffff';
     g.save();
-    // Sway zone
     g.strokeStyle = col;
     g.globalAlpha = 0.35;
     g.lineWidth = 1.5;
@@ -1000,15 +1307,12 @@ export class ArrowGame {
     g.stroke();
     g.setLineDash([]);
     g.globalAlpha = 1;
-    // Draw progress ring
     if (this.drawing) {
-      g.strokeStyle = col;
       g.lineWidth = 3;
       g.beginPath();
       g.arc(x, y, 20, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, this.power / FULL_DRAW));
       g.stroke();
     }
-    // The +
     g.strokeStyle = 'rgba(0,0,0,0.6)';
     g.lineWidth = 5;
     g.beginPath();
@@ -1033,66 +1337,20 @@ export class ArrowGame {
     g.beginPath();
     g.arc(x, y, 2, 0, Math.PI * 2);
     g.fill();
-    // Under-drawn: show where it would drop
     if (this.drawing && this.power < FULL_DRAW) {
-      const p = this.landingPoint();
+      const drop = (FULL_DRAW - this.power) * 120;
       g.globalAlpha = 0.6;
       g.strokeStyle = '#ffb4a3';
       g.setLineDash([3, 4]);
       g.beginPath();
       g.moveTo(x, y);
-      g.lineTo(p.x, p.y);
+      g.lineTo(x, y + drop);
       g.stroke();
       g.setLineDash([]);
       g.beginPath();
-      g.arc(p.x, p.y, 5, 0, Math.PI * 2);
+      g.arc(x, y + drop, 5, 0, Math.PI * 2);
       g.stroke();
     }
-    g.restore();
-  }
-
-  private drawArrow(a: Arrow) {
-    const g = this.g;
-    if (a.flying && a.trail.length > 1) {
-      g.strokeStyle = 'rgba(255,236,170,0.5)';
-      g.lineWidth = 2;
-      g.beginPath();
-      a.trail.forEach((p, i) => (i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y)));
-      g.stroke();
-    }
-    g.save();
-    g.translate(a.x, a.y);
-    g.rotate(a.angle);
-    // The arrow's position is its tip, so the shaft trails behind it.
-    this.arrowShape(-30, 0, 0, 1);
-    g.restore();
-  }
-
-  private arrowShape(x: number, y: number, rot: number, s: number) {
-    const g = this.g;
-    g.save();
-    g.translate(x, y);
-    g.rotate(rot);
-    g.scale(s, s);
-    g.strokeStyle = '#d9c09a';
-    g.lineWidth = 2.5;
-    g.beginPath();
-    g.moveTo(-26, 0);
-    g.lineTo(22, 0);
-    g.stroke();
-    g.fillStyle = '#c7ccd6';
-    g.beginPath();
-    g.moveTo(30, 0);
-    g.lineTo(20, -4.5);
-    g.lineTo(20, 4.5);
-    g.fill();
-    g.fillStyle = '#ff7a5c';
-    g.beginPath();
-    g.moveTo(-26, 0);
-    g.lineTo(-18, -6);
-    g.lineTo(-14, 0);
-    g.lineTo(-18, 6);
-    g.fill();
     g.restore();
   }
 }
